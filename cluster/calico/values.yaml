@@ -1,0 +1,31 @@
+# helm values for the tigera-operator chart, rendered into an Installation CR
+#   helm install calico projectcalico/tigera-operator -n tigera-operator -f values.yaml
+
+installation:
+  calicoNetwork:
+    bgp: Disabled
+
+    # atomic list, so the operator's defaults are spelled out here too. leave one
+    # out and server-side apply fights the operator over ownership on upgrade
+    ipPools:
+      - name: default-ipv4-ippool
+        cidr: 10.32.0.0/16
+        encapsulation: VXLANCrossSubnet
+        natOutgoing: Enabled
+        blockSize: 26
+        nodeSelector: all()
+        allowedUses: [Workload, Tunnel]
+        assignmentMode: Automatic
+        disableBGPExport: false
+        disableNewAllocations: false
+
+    # Vagrant's NAT eth0 is 10.0.2.15 on every VM, autodetection would pick it
+    nodeAddressAutodetectionV4:
+      cidrs:
+        - 10.50.0.0/24
+
+# flow collector and its UI, on by default. Prometheus and Grafana cover this
+goldmane:
+  enabled: false
+whisker:
+  enabled: false
