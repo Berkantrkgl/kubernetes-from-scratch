@@ -1,0 +1,18 @@
+---
+kubernetes_version: "1.36.4"
+kubernetes_apt_channel: "v1.36"   # repo is per minor, package version is per patch
+
+# picked to avoid Calico's 192.168/16, docker0's 172.17/16 and the node net
+pod_cidr: "10.32.0.0/16"
+service_cidr: "10.96.0.0/16"      # /16 not kubeadm's /12, keeps iptables smaller
+
+cluster_dns_domain: "cluster.local"
+control_plane_endpoint: "10.50.0.10:6443"
+
+# has to match kubelet's cgroupDriver
+containerd_cgroup_driver: "systemd"
+
+required_kernel_modules:
+  - overlay
+  - br_netfilter   # bridged pod traffic skips netfilter without it, Services then
+                   # fail silently between pods on the same node

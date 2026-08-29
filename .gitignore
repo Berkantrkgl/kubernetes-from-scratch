@@ -1,0 +1,16 @@
+# Vagrant machine state
+.vagrant/
+*.log
+
+# Cluster credentials and generated material
+kubeconfig
+*.kubeconfig
+admin.conf
+**/secrets/
+*.pem
+*.key
+!**/*.pub
+.env
+.env.*
+
+docs

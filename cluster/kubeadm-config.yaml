@@ -1,0 +1,94 @@
+# Run from the control plane node, the repo is mounted there by Vagrant:
+#   sudo kubeadm init --config /vagrant/cluster/kubeadm-config.yaml
+
+---
+apiVersion: kubeadm.k8s.io/v1beta4
+kind: InitConfiguration
+
+localAPIEndpoint:
+  # without this kubeadm picks the interface behind the default route, which is
+  # Vagrant's NAT one and identical on all three VMs
+  advertiseAddress: 10.50.0.10
+  bindPort: 6443
+
+nodeRegistration:
+  name: k8s-master
+  criSocket: unix:///run/containerd/containerd.sock
+
+  # kept, no platform workloads on the control plane
+  taints:
+    - key: node-role.kubernetes.io/control-plane
+      effect: NoSchedule
+
+  kubeletExtraArgs:
+    - name: node-ip
+      value: 10.50.0.10
+
+---
+apiVersion: kubeadm.k8s.io/v1beta4
+kind: ClusterConfiguration
+
+kubernetesVersion: v1.36.4
+controlPlaneEndpoint: 10.50.0.10:6443
+
+networking:
+  podSubnet: 10.32.0.0/16
+  serviceSubnet: 10.96.0.0/16
+  dnsDomain: cluster.local
+
+apiServer:
+  # reaching the API by a name not listed here fails cert verification, and
+  # adding one later means regenerating the certificate
+  certSANs:
+    - 10.50.0.10
+    - k8s-master
+    - kubernetes
+    - kubernetes.default
+    - kubernetes.default.svc
+    - kubernetes.default.svc.cluster.local
+    - 127.0.0.1
+    - localhost
+
+etcd:
+  local:
+    dataDir: /var/lib/etcd
+    # etcd fsyncs every write and a virtual disk is slower than the defaults
+    # expect, this avoids spurious election timeouts
+    extraArgs:
+      - name: heartbeat-interval
+        value: "500"
+      - name: election-timeout
+        value: "5000"
+
+---
+apiVersion: kubelet.config.k8s.io/v1beta1
+kind: KubeletConfiguration
+
+# must match containerd's SystemdCgroup
+cgroupDriver: systemd
+
+clusterDNS:
+  - 10.96.0.10
+clusterDomain: cluster.local
+
+# leave room for the OS and for kubelet/containerd themselves. Small numbers
+# because the nodes are small.
+systemReserved:
+  cpu: 100m
+  memory: 200Mi
+kubeReserved:
+  cpu: 100m
+  memory: 200Mi
+
+# evict while there is still room to act, instead of waiting for the kernel
+# OOM killer to pick a victim
+evictionHard:
+  memory.available: "200Mi"
+  nodefs.available: "10%"
+
+---
+apiVersion: kubeproxy.config.k8s.io/v1alpha1
+kind: KubeProxyConfiguration
+
+# IPVS only pays off past a few thousand Services, iptables is easier to debug
+mode: iptables

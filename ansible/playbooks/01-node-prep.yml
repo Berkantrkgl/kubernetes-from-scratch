@@ -1,0 +1,236 @@
+---
+# Gets every node ready for kubeadm. Does not create the cluster -- kubeadm init
+# and join are run separately.
+#
+#   ansible-playbook playbooks/01-node-prep.yml
+#
+# Run it twice, second run should say changed=0.
+
+- name: Prepare nodes for kubeadm
+  hosts: k8s_cluster
+  become: true
+
+  vars:
+    k8s_pkg_version: "{{ kubernetes_version }}-1.1"   # packages carry a distro suffix
+
+    k8s_sysctl:
+      net.bridge.bridge-nf-call-iptables: "1"
+      net.bridge.bridge-nf-call-ip6tables: "1"
+      net.ipv4.ip_forward: "1"
+
+  tasks:
+
+    - name: Turn swap off for the running system
+      ansible.builtin.command: swapoff --all
+      when: ansible_swaptotal_mb | int > 0
+      changed_when: true
+      tags: [swap]
+
+    - name: Comment out swap entries so it stays off after a reboot
+      ansible.builtin.replace:
+        path: /etc/fstab
+        regexp: '^(\s*[^#\s]\S*\s+\S+\s+swap\s+.*)$'
+        replace: '# \1'
+      tags: [swap]
+
+    - name: Load the required kernel modules on every boot
+      ansible.builtin.copy:
+        dest: /etc/modules-load.d/kubernetes.conf
+        content: "{{ required_kernel_modules | join('\n') }}\n"
+        owner: root
+        group: root
+        mode: "0644"
+      tags: [kernel]
+
+    - name: Load the required kernel modules now
+      community.general.modprobe:
+        name: "{{ item }}"
+        state: present
+      loop: "{{ required_kernel_modules }}"
+      tags: [kernel]
+
+    - name: Apply the sysctl settings kubeadm requires
+      ansible.posix.sysctl:
+        name: "{{ item.key }}"
+        value: "{{ item.value }}"
+        sysctl_file: /etc/sysctl.d/99-kubernetes.conf
+        sysctl_set: true
+        reload: true
+        state: present
+      loop: "{{ k8s_sysctl | dict2items }}"
+      loop_control:
+        label: "{{ item.key }}"
+      tags: [sysctl]
+
+    - name: Install packages needed to fetch signed repositories
+      ansible.builtin.apt:
+        name:
+          - apt-transport-https
+          - ca-certificates
+          - curl
+          - gnupg
+        state: present
+        update_cache: true
+        cache_valid_time: 3600
+      tags: [packages]
+
+    - name: Create the keyring directory
+      ansible.builtin.file:
+        path: /etc/apt/keyrings
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+      tags: [packages]
+
+    # Ubuntu's containerd is older than upstream, so it comes from Docker's repo
+    - name: Add the Docker repository signing key
+      ansible.builtin.get_url:
+        url: https://download.docker.com/linux/ubuntu/gpg
+        dest: /etc/apt/keyrings/docker.asc
+        owner: root
+        group: root
+        mode: "0644"
+      tags: [containerd]
+
+    - name: Add the Docker repository
+      ansible.builtin.apt_repository:
+        repo: >-
+          deb [arch=amd64 signed-by=/etc/apt/keyrings/docker.asc]
+          https://download.docker.com/linux/ubuntu
+          {{ ansible_distribution_release }} stable
+        filename: docker
+        state: present
+      tags: [containerd]
+
+    - name: Install containerd
+      ansible.builtin.apt:
+        name: containerd.io
+        state: present
+        update_cache: true
+      tags: [containerd]
+
+    # comes before the containerd config, the pause image below is read from kubeadm
+    - name: Add the Kubernetes repository signing key
+      ansible.builtin.get_url:
+        url: "https://pkgs.k8s.io/core:/stable:/{{ kubernetes_apt_channel }}/deb/Release.key"
+        dest: /etc/apt/keyrings/kubernetes.asc
+        owner: root
+        group: root
+        mode: "0644"
+      tags: [kubernetes]
+
+    - name: Add the Kubernetes repository
+      ansible.builtin.apt_repository:
+        repo: >-
+          deb [signed-by=/etc/apt/keyrings/kubernetes.asc]
+          https://pkgs.k8s.io/core:/stable:/{{ kubernetes_apt_channel }}/deb/ /
+        filename: kubernetes
+        state: present
+      tags: [kubernetes]
+
+    - name: Install kubelet, kubeadm and kubectl at a pinned version
+      ansible.builtin.apt:
+        name:
+          - "kubelet={{ k8s_pkg_version }}"
+          - "kubeadm={{ k8s_pkg_version }}"
+          - "kubectl={{ k8s_pkg_version }}"
+        state: present
+        update_cache: true
+        allow_downgrade: true
+      tags: [kubernetes]
+
+    # a cluster upgrade is an ordered procedure, an unattended apt upgrade
+    # must not start one by accident
+    - name: Hold the Kubernetes packages at that version
+      ansible.builtin.dpkg_selections:
+        name: "{{ item }}"
+        selection: hold
+      loop: [kubelet, kubeadm, kubectl]
+      tags: [kubernetes]
+
+    - name: Ensure the containerd configuration directory exists
+      ansible.builtin.file:
+        path: /etc/containerd
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+      tags: [containerd]
+
+    # the package drops its own stub config.toml, so `creates:` here would skip
+    # generation and the two replaces below would match nothing, silently
+    - name: Check whether containerd already holds a generated configuration
+      ansible.builtin.command: grep -q SystemdCgroup /etc/containerd/config.toml
+      register: containerd_config_state
+      changed_when: false
+      failed_when: false
+      check_mode: false
+      tags: [containerd]
+
+    - name: Generate the default containerd configuration
+      ansible.builtin.shell: containerd config default > /etc/containerd/config.toml
+      when: containerd_config_state.rc != 0
+      notify: Restart containerd
+      tags: [containerd]
+
+    - name: Use the systemd cgroup driver
+      ansible.builtin.replace:
+        path: /etc/containerd/config.toml
+        regexp: '^(\s*)SystemdCgroup\s*=\s*false\s*$'
+        replace: '\1SystemdCgroup = true'
+      notify: Restart containerd
+      tags: [containerd]
+
+    - name: Ask kubeadm which pause image this version wants
+      ansible.builtin.command: kubeadm config images list --kubernetes-version={{ kubernetes_version }}
+      register: kubeadm_images
+      changed_when: false
+      check_mode: false
+      tags: [containerd]
+
+    # containerd's own default can lag kubeadm's, which churns sandboxes.
+    # containerd 2.x quotes with single quotes, hence both quote styles.
+    - name: Point containerd at that pause image
+      ansible.builtin.replace:
+        path: /etc/containerd/config.toml
+        regexp: "^(\\s*sandbox\\s*=\\s*)['\"][^'\"]*pause:[^'\"]*['\"]\\s*$"
+        replace: "\\1'{{ kubeadm_images.stdout_lines | select('search', 'pause') | first }}'"
+      notify: Restart containerd
+      tags: [containerd]
+
+    - name: Enable and start containerd
+      ansible.builtin.service:
+        name: containerd
+        state: started
+        enabled: true
+      tags: [containerd]
+
+    - name: Tell kubelet which address to advertise
+      ansible.builtin.copy:
+        dest: /etc/default/kubelet
+        content: "KUBELET_EXTRA_ARGS=--node-ip={{ node_ip }}\n"
+        owner: root
+        group: root
+        mode: "0644"
+      notify: Restart kubelet
+      tags: [kubelet]
+
+    # only enabled, not started -- it crash-loops until kubeadm writes its config
+    - name: Enable kubelet
+      ansible.builtin.service:
+        name: kubelet
+        enabled: true
+      tags: [kubelet]
+
+  handlers:
+    - name: Restart containerd
+      ansible.builtin.service:
+        name: containerd
+        state: restarted
+
+    - name: Restart kubelet
+      ansible.builtin.service:
+        name: kubelet
+        state: restarted
+      failed_when: false   # expected to fail before kubeadm has run
