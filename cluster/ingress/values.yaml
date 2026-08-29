@@ -1,0 +1,40 @@
+controller:
+  replicaCount: 2
+
+  # one per worker. required, not preferred -- two nodes, two replicas, no reason
+  # to let both land on the same one
+  affinity:
+    podAntiAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:
+        - topologyKey: kubernetes.io/hostname
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/instance: nginx-ingress
+              app.kubernetes.io/name: nginx-ingress
+
+  service:
+    type: LoadBalancer
+
+    # chart default is Local. MetalLB issue #2747: Local + replicas on different
+    # nodes makes several speakers ARP the same VIP with different MACs
+    externalTrafficPolicy: Cluster
+
+    annotations:
+      # spec.loadBalancerIP is deprecated upstream, MetalLB reads this instead
+      metallb.universe.tf/loadBalancerIPs: 10.50.0.200
+
+  ingressClass:
+    name: nginx
+    create: true
+    setAsDefaultIngress: true
+
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      memory: 256Mi
+
+prometheus:
+  create: true
+  port: 9113
