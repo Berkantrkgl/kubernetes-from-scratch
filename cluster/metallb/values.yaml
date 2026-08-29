@@ -1,0 +1,3 @@
+# BGP backend, on by default. we announce with ARP, there is no router to peer with
+frrk8s:
+  enabled: false

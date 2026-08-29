@@ -1,0 +1,22 @@
+# apply after the chart is up, the CRDs come with it
+---
+apiVersion: metallb.io/v1beta1
+kind: IPAddressPool
+metadata:
+  name: default
+  namespace: metallb-system
+spec:
+  # has to sit in the node subnet, L2 mode answers ARP and that stops at the
+  # broadcast domain. .10-.12 are the nodes, .1 is the host
+  addresses:
+    - 10.50.0.200-10.50.0.250
+
+---
+apiVersion: metallb.io/v1beta1
+kind: L2Advertisement
+metadata:
+  name: default
+  namespace: metallb-system
+spec:
+  ipAddressPools:
+    - default
