@@ -16,3 +16,11 @@ required_kernel_modules:
   - overlay
   - br_netfilter   # bridged pod traffic skips netfilter without it, Services then
                    # fail silently between pods on the same node
+
+helm_version: "4.2.4"             # matches the Helm that ArgoCD 3.5.x bundles
+
+calico_version: "v3.32.1"
+metallb_chart_version: "0.16.1"
+ingress_chart_version: "2.6.4"    # nginx/kubernetes-ingress, not kubernetes/ingress-nginx
+
+jenkins_node: node-2              # the case's "Node 3"

@@ -86,8 +86,8 @@ log "Modules built successfully."
 if sudo modprobe vboxdrv 2>/dev/null; then
   log "vboxdrv loaded. VirtualBox is ready."
 else
-  warn "Built but won't load, Secure Boot is on. Either turn it off in the"
-  warn "firmware, or sign the modules: ./scripts/01-secureboot-sign.sh enroll"
+  warn "Built but won't load. Secure Boot is on and these modules are unsigned."
+  warn "Turn Secure Boot off in the firmware, or sign them with a MOK yourself."
 fi
 
 log "Installed versions"

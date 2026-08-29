@@ -1,0 +1,107 @@
+---
+# CNI, LoadBalancer and ingress. Runs from the control plane, which is where the
+# kubeconfig and helm live. Safe to re-run.
+#
+#   ansible-playbook playbooks/04-platform.yml
+
+- name: Install the platform components
+  hosts: control_plane
+  become: true
+
+  environment:
+    KUBECONFIG: /etc/kubernetes/admin.conf
+
+  tasks:
+
+    - name: Add the Helm repositories
+      ansible.builtin.command: "helm repo add {{ item.name }} {{ item.url }} --force-update"
+      loop:
+        - { name: projectcalico, url: "https://docs.tigera.io/calico/charts" }
+        - { name: metallb, url: "https://metallb.github.io/metallb" }
+      loop_control:
+        label: "{{ item.name }}"
+      changed_when: false
+      tags: [helm]
+
+    - name: List the installed Helm releases
+      ansible.builtin.command: helm list --all-namespaces --short
+      register: helm_releases
+      changed_when: false
+      tags: [helm]
+
+    # server-side because some Calico CRDs are larger than the 262 KB annotation
+    # that client-side apply writes. Separate chart, not a release -- Helm never
+    # upgrades CRDs it owns
+    - name: Install the Calico CRDs
+      ansible.builtin.shell: >-
+        set -o pipefail &&
+        helm template calico-crds projectcalico/crd.projectcalico.org.v1
+        --version {{ calico_version }}
+        | kubectl apply --server-side -f -
+      args:
+        executable: /bin/bash
+      # server-side apply prints serverside-applied whether or not anything moved,
+      # so there is nothing here to report a change from
+      changed_when: false
+      tags: [calico]
+
+    - name: Install Calico
+      ansible.builtin.command: >-
+        helm install calico projectcalico/tigera-operator
+        --version {{ calico_version }}
+        --namespace tigera-operator --create-namespace
+        -f /vagrant/cluster/calico/values.yaml
+      when: "'calico' not in helm_releases.stdout_lines"
+      tags: [calico]
+
+    - name: Wait for every node to report Ready
+      ansible.builtin.command: kubectl wait --for=condition=Ready node --all --timeout=300s
+      changed_when: false
+      tags: [calico]
+
+    - name: Install MetalLB
+      ansible.builtin.command: >-
+        helm install metallb metallb/metallb
+        --version {{ metallb_chart_version }}
+        --namespace metallb-system --create-namespace
+        -f /vagrant/cluster/metallb/values.yaml
+      when: "'metallb' not in helm_releases.stdout_lines"
+      tags: [metallb]
+
+    # the address pool is rejected until MetalLB's admission webhook is serving
+    - name: Wait for the MetalLB controller
+      ansible.builtin.command: >-
+        kubectl wait --for=condition=Available deployment/metallb-controller
+        -n metallb-system --timeout=300s
+      changed_when: false
+      tags: [metallb]
+
+    - name: Apply the MetalLB address pool
+      ansible.builtin.command: kubectl apply -f /vagrant/cluster/metallb/pool.yaml
+      register: metallb_pool
+      changed_when: "'configured' in metallb_pool.stdout or 'created' in metallb_pool.stdout"
+      tags: [metallb]
+
+    # OCI registry, so there is no repo to add
+    - name: Install the NGINX ingress controller
+      ansible.builtin.command: >-
+        helm install nginx-ingress oci://ghcr.io/nginx/charts/nginx-ingress
+        --version {{ ingress_chart_version }}
+        --namespace nginx-ingress --create-namespace
+        -f /vagrant/cluster/ingress/values.yaml
+      when: "'nginx-ingress' not in helm_releases.stdout_lines"
+      tags: [ingress]
+
+    - name: Read the workload label on the Jenkins node
+      ansible.builtin.command: >-
+        kubectl get node {{ jenkins_node }}
+        -o jsonpath={.metadata.labels.workload}
+      register: jenkins_label
+      changed_when: false
+      tags: [labels]
+
+    # a label rather than a node name, so the constraint survives a rename
+    - name: Label the Jenkins node
+      ansible.builtin.command: kubectl label node {{ jenkins_node }} workload=jenkins
+      when: jenkins_label.stdout != "jenkins"
+      tags: [labels]

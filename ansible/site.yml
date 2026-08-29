@@ -1,0 +1,10 @@
+---
+# The whole cluster, from three fresh VMs to a working platform.
+#
+#   vagrant up
+#   cd ansible && ansible-playbook site.yml
+
+- ansible.builtin.import_playbook: playbooks/01-node-prep.yml
+- ansible.builtin.import_playbook: playbooks/02-control-plane.yml
+- ansible.builtin.import_playbook: playbooks/03-worker-join.yml
+- ansible.builtin.import_playbook: playbooks/04-platform.yml

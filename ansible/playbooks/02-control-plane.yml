@@ -1,0 +1,122 @@
+---
+# Bootstraps the control plane. Safe to re-run.
+#
+#   ansible-playbook playbooks/02-control-plane.yml
+
+- name: Bootstrap the control plane
+  hosts: control_plane
+  become: true
+
+  tasks:
+
+    - name: Create the encryption configuration directory
+      ansible.builtin.file:
+        path: /etc/kubernetes/enc
+        state: directory
+        owner: root
+        group: root
+        mode: "0700"
+      tags: [encryption]
+
+    - name: Look for an existing encryption configuration
+      ansible.builtin.stat:
+        path: /etc/kubernetes/enc/encryption-config.yaml
+      register: enc_config
+      tags: [encryption]
+
+    # regenerating this would orphan every Secret already written with the old key
+    - name: Generate a secretbox key
+      ansible.builtin.command: openssl rand -base64 32
+      register: enc_key
+      when: not enc_config.stat.exists
+      changed_when: false
+      no_log: true
+      tags: [encryption]
+
+    # written before kubeadm init, so the apiserver is born with encryption on and
+    # no Secret is ever stored in plaintext
+    - name: Write the encryption configuration
+      ansible.builtin.copy:
+        dest: /etc/kubernetes/enc/encryption-config.yaml
+        owner: root
+        group: root
+        mode: "0600"
+        content: |
+          apiVersion: apiserver.config.k8s.io/v1
+          kind: EncryptionConfiguration
+          resources:
+            - resources:
+                - secrets
+              providers:
+                - secretbox:
+                    keys:
+                      - name: key1
+                        secret: {{ enc_key.stdout }}
+                - identity: {}
+      when: not enc_config.stat.exists
+      no_log: true
+      tags: [encryption]
+
+    - name: Look for an existing cluster
+      ansible.builtin.stat:
+        path: /etc/kubernetes/admin.conf
+      register: admin_conf
+      tags: [init]
+
+    # separately, so a registry problem surfaces before init is halfway through
+    # writing certificates
+    - name: Pull the control plane images
+      ansible.builtin.command: >-
+        kubeadm config images pull --config /vagrant/cluster/kubeadm-config.yaml
+      when: not admin_conf.stat.exists
+      tags: [init]
+
+    - name: Bootstrap the cluster
+      ansible.builtin.command: >-
+        kubeadm init --config /vagrant/cluster/kubeadm-config.yaml
+      args:
+        creates: /etc/kubernetes/admin.conf
+      tags: [init]
+
+    - name: Create the kube config directory for the login user
+      ansible.builtin.file:
+        path: /home/vagrant/.kube
+        state: directory
+        owner: vagrant
+        group: vagrant
+        mode: "0750"
+      tags: [kubeconfig]
+
+    - name: Install the admin kubeconfig for the login user
+      ansible.builtin.copy:
+        src: /etc/kubernetes/admin.conf
+        dest: /home/vagrant/.kube/config
+        remote_src: true
+        owner: vagrant
+        group: vagrant
+        mode: "0600"
+      tags: [kubeconfig]
+
+    - name: Read the installed Helm version
+      ansible.builtin.command: helm version --short
+      register: helm_installed
+      changed_when: false
+      failed_when: false
+      tags: [helm]
+
+    - name: Download the Helm archive
+      ansible.builtin.get_url:
+        url: "https://get.helm.sh/helm-v{{ helm_version }}-linux-amd64.tar.gz"
+        dest: "/tmp/helm-{{ helm_version }}.tar.gz"
+        mode: "0644"
+      when: helm_version not in (helm_installed.stdout | default(''))
+      tags: [helm]
+
+    # a static binary rather than a package, so the version is the one we chose.
+    # naming the member keeps the archive's LICENSE and README out of /usr/local/bin
+    - name: Install the Helm binary
+      ansible.builtin.command: >-
+        tar -xz --strip-components=1 -C /usr/local/bin
+        -f /tmp/helm-{{ helm_version }}.tar.gz linux-amd64/helm
+      when: helm_version not in (helm_installed.stdout | default(''))
+      tags: [helm]

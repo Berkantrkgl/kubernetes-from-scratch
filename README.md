@@ -45,20 +45,23 @@ vagrant up                          # three VMs
 
 cd ansible
 ansible all -m ping                 # check connectivity
-ansible-playbook playbooks/01-node-prep.yml
-
-vagrant ssh k8s-master
-sudo kubeadm init --config /vagrant/cluster/kubeadm-config.yaml
+ansible-playbook site.yml           # node prep, kubeadm, join, platform
 ```
 
-The playbook is idempotent — running it twice should report `changed=0`.
+That is the whole cluster: prepared nodes, an encrypted control plane, both workers
+joined, Calico, MetalLB and the ingress controller. A rebuild from destroyed VMs
+takes about four and a half minutes.
+
+The playbooks are idempotent — a second run reports `changed=0` on every host.
 
 ## Progress
 
 - [x] Host prerequisites and VM environment
 - [x] Node preparation with Ansible
 - [x] Cluster bootstrap, Calico, encrypted Secrets at rest
-- [ ] MetalLB, ingress-nginx, ExternalDNS
+- [x] MetalLB and the NGINX ingress controller
+- [x] One-command rebuild from empty VMs
+- [ ] ExternalDNS
 - [ ] Java application and container image
 - [ ] Jenkins with configuration as code
 - [ ] Prometheus, Elasticsearch, Grafana, fluent-bit, AlertManager
