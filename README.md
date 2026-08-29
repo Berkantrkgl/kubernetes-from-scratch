@@ -57,7 +57,7 @@ The playbook is idempotent — running it twice should report `changed=0`.
 
 - [x] Host prerequisites and VM environment
 - [x] Node preparation with Ansible
-- [ ] Cluster bootstrap and Calico
+- [x] Cluster bootstrap, Calico, encrypted Secrets at rest
 - [ ] MetalLB, ingress-nginx, ExternalDNS
 - [ ] Java application and container image
 - [ ] Jenkins with configuration as code

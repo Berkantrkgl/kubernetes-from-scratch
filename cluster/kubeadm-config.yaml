@@ -1,7 +1,6 @@
 # Run from the control plane node, the repo is mounted there by Vagrant:
 #   sudo kubeadm init --config /vagrant/cluster/kubeadm-config.yaml
 
----
 apiVersion: kubeadm.k8s.io/v1beta4
 kind: InitConfiguration
 
@@ -37,6 +36,20 @@ networking:
   dnsDomain: cluster.local
 
 apiServer:
+  extraArgs:
+    - name: encryption-provider-config
+      value: /etc/kubernetes/enc/encryption-config.yaml
+    # lets a key be rotated without restarting the apiserver
+    - name: encryption-provider-config-automatic-reload
+      value: "true"
+
+  extraVolumes:
+    - name: enc
+      hostPath: /etc/kubernetes/enc
+      mountPath: /etc/kubernetes/enc
+      pathType: DirectoryOrCreate
+      readOnly: true
+
   # reaching the API by a name not listed here fails cert verification, and
   # adding one later means regenerating the certificate
   certSANs:
