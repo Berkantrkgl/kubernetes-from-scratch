@@ -1,0 +1,19 @@
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: pod-lifecycle
+  namespace: monitoring
+spec:
+  groups:
+    - name: pod-lifecycle
+      rules:
+        # one restart is enough. the chart's own KubePodCrashLooping needs a loop,
+        # which is a different question with a different urgency
+        - alert: PodRestarted
+          expr: increase(kube_pod_container_status_restarts_total[5m]) > 0
+          for: 0m
+          labels:
+            severity: warning
+          annotations:
+            summary: "{{ $labels.namespace }}/{{ $labels.pod }} restarted"
+            description: "container {{ $labels.container }} restarted within the last 5 minutes"

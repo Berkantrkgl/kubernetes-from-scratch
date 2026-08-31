@@ -1,0 +1,17 @@
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: query-echo
+  namespace: monitoring
+spec:
+  # the Service lives in another namespace, so it has to be named here
+  namespaceSelector:
+    matchNames: [query-echo]
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: query-echo
+  endpoints:
+    # "http" is the Service's port name, not the container's
+    - port: http
+      path: /actuator/prometheus
+      interval: 30s

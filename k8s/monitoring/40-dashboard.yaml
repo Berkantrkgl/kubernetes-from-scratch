@@ -1,0 +1,613 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cluster-overview-dashboard
+  namespace: monitoring
+  labels:
+    # the label grafana's sidecar watches for. no dashboard is clicked into
+    # existence, so nothing is lost when the pod is replaced
+    grafana_dashboard: "1"
+data:
+  cluster-overview.json: |
+    {
+      "title": "Cluster and application overview",
+      "uid": "cluster-overview",
+      "tags": [
+        "k8s",
+        "case-study"
+      ],
+      "timezone": "browser",
+      "editable": true,
+      "schemaVersion": 39,
+      "refresh": "30s",
+      "time": {
+        "from": "now-1h",
+        "to": "now"
+      },
+      "panels": [
+        {
+          "type": "row",
+          "title": "Application - query-echo",
+          "collapsed": false,
+          "gridPos": {
+            "x": 0,
+            "y": 0,
+            "w": 24,
+            "h": 1
+          },
+          "panels": []
+        },
+        {
+          "type": "timeseries",
+          "title": "Request rate by pod",
+          "description": "Stacked, so the total is the service rate and each band is one pod. Uneven bands mean the ingress is not spreading traffic.",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "gridPos": {
+            "x": 0,
+            "y": 1,
+            "w": 12,
+            "h": 8
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "reqps",
+              "custom": {
+                "lineWidth": 2,
+                "fillOpacity": 12,
+                "showPoints": "never",
+                "stacking": {
+                  "mode": "normal"
+                }
+              },
+              "color": {
+                "mode": "palette-classic"
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom",
+              "calcs": [
+                "mean",
+                "max"
+              ]
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "expr": "sum by (pod) (rate(http_server_requests_seconds_count{job=\"query-echo\"}[5m]))",
+              "legendFormat": "{{pod}}",
+              "refId": "A",
+              "range": true,
+              "editorMode": "code"
+            }
+          ]
+        },
+        {
+          "type": "timeseries",
+          "title": "Request latency by uri",
+          "description": "p95 needs histogram buckets, which management.metrics.distribution.percentiles-histogram enables. max is the single worst request in the window.",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "gridPos": {
+            "x": 12,
+            "y": 1,
+            "w": 12,
+            "h": 8
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "s",
+              "custom": {
+                "lineWidth": 2,
+                "fillOpacity": 12,
+                "showPoints": "never",
+                "stacking": {
+                  "mode": "none"
+                }
+              },
+              "color": {
+                "mode": "palette-classic"
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom",
+              "calcs": [
+                "mean",
+                "max"
+              ]
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "expr": "histogram_quantile(0.95, sum by (le, uri) (rate(http_server_requests_seconds_bucket{job=\"query-echo\"}[5m])))",
+              "legendFormat": "p95 {{uri}}",
+              "refId": "A",
+              "range": true,
+              "editorMode": "code"
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "expr": "max by (uri) (http_server_requests_seconds_max{job=\"query-echo\"})",
+              "legendFormat": "max {{uri}}",
+              "refId": "B",
+              "range": true,
+              "editorMode": "code"
+            }
+          ]
+        },
+        {
+          "type": "timeseries",
+          "title": "JVM heap used",
+          "description": "The container limit is 512Mi and MaxRAMPercentage is 75, so the heap ceiling is about 384Mi. A flat sawtooth is normal GC behaviour.",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "gridPos": {
+            "x": 0,
+            "y": 9,
+            "w": 9,
+            "h": 7
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "bytes",
+              "custom": {
+                "lineWidth": 2,
+                "fillOpacity": 12,
+                "showPoints": "never",
+                "stacking": {
+                  "mode": "none"
+                }
+              },
+              "color": {
+                "mode": "palette-classic"
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom",
+              "calcs": [
+                "mean",
+                "max"
+              ]
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "expr": "sum by (pod) (jvm_memory_used_bytes{job=\"query-echo\", area=\"heap\"})",
+              "legendFormat": "{{pod}}",
+              "refId": "A",
+              "range": true,
+              "editorMode": "code"
+            }
+          ]
+        },
+        {
+          "type": "stat",
+          "title": "Pods serving",
+          "description": "Scrape targets answering. Four is the declared replica count; anything less means a pod is not ready or not scraped.",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "gridPos": {
+            "x": 9,
+            "y": 9,
+            "w": 3,
+            "h": 7
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "red",
+                    "value": null
+                  },
+                  {
+                    "color": "orange",
+                    "value": 3
+                  },
+                  {
+                    "color": "green",
+                    "value": 4
+                  }
+                ]
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "colorMode": "background",
+            "graphMode": "none",
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": "",
+              "values": false
+            }
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "expr": "sum(up{job=\"query-echo\"})",
+              "legendFormat": "ready",
+              "refId": "A",
+              "range": true,
+              "editorMode": "code"
+            }
+          ]
+        },
+        {
+          "type": "timeseries",
+          "title": "Application log volume, from Elasticsearch",
+          "description": "Counted in Elasticsearch, not Prometheus. The application writes no stdout, so these lines arrive through the fluent-bit sidecar tailing its log file.",
+          "datasource": {
+            "type": "elasticsearch",
+            "uid": "es-app"
+          },
+          "gridPos": {
+            "x": 12,
+            "y": 9,
+            "w": 12,
+            "h": 7
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "custom": {
+                "lineWidth": 2,
+                "fillOpacity": 12,
+                "showPoints": "never",
+                "stacking": {
+                  "mode": "normal"
+                }
+              },
+              "color": {
+                "mode": "palette-classic"
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom",
+              "calcs": [
+                "mean",
+                "max"
+              ]
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "elasticsearch",
+                "uid": "es-app"
+              },
+              "refId": "A",
+              "query": "*",
+              "timeField": "@timestamp",
+              "metrics": [
+                {
+                  "id": "1",
+                  "type": "count"
+                }
+              ],
+              "bucketAggs": [
+                {
+                  "id": "2",
+                  "type": "date_histogram",
+                  "field": "@timestamp",
+                  "settings": {
+                    "interval": "auto",
+                    "min_doc_count": "0"
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "row",
+          "title": "Cluster",
+          "collapsed": false,
+          "gridPos": {
+            "x": 0,
+            "y": 16,
+            "w": 24,
+            "h": 1
+          },
+          "panels": []
+        },
+        {
+          "type": "timeseries",
+          "title": "Node CPU busy",
+          "description": "From node-exporter, which runs on the control plane too because it tolerates the NoSchedule taint.",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "gridPos": {
+            "x": 0,
+            "y": 17,
+            "w": 12,
+            "h": 8
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "percent",
+              "custom": {
+                "lineWidth": 2,
+                "fillOpacity": 12,
+                "showPoints": "never",
+                "stacking": {
+                  "mode": "none"
+                }
+              },
+              "color": {
+                "mode": "palette-classic"
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom",
+              "calcs": [
+                "mean",
+                "max"
+              ]
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "expr": "100 - (avg by (instance) (rate(node_cpu_seconds_total{mode=\"idle\"}[5m])) * 100)",
+              "legendFormat": "{{instance}}",
+              "refId": "A",
+              "range": true,
+              "editorMode": "code"
+            }
+          ]
+        },
+        {
+          "type": "timeseries",
+          "title": "Node memory available",
+          "description": "Percentage the kernel considers available. kubelet evicts at 200Mi absolute, so on these 4.5Gi nodes that threshold is around 4%.",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "gridPos": {
+            "x": 12,
+            "y": 17,
+            "w": 12,
+            "h": 8
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "percent",
+              "custom": {
+                "lineWidth": 2,
+                "fillOpacity": 12,
+                "showPoints": "never",
+                "stacking": {
+                  "mode": "none"
+                }
+              },
+              "color": {
+                "mode": "palette-classic"
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom",
+              "calcs": [
+                "mean",
+                "max"
+              ]
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "expr": "node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes * 100",
+              "legendFormat": "{{instance}}",
+              "refId": "A",
+              "range": true,
+              "editorMode": "code"
+            }
+          ]
+        },
+        {
+          "type": "timeseries",
+          "title": "Container restarts, 5m increase",
+          "description": "From kube-state-metrics, filtered to > 0 so an empty panel means nothing restarted. This is the metric the PodRestarted alert fires on.",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "gridPos": {
+            "x": 0,
+            "y": 25,
+            "w": 12,
+            "h": 7
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "custom": {
+                "lineWidth": 2,
+                "fillOpacity": 12,
+                "showPoints": "never",
+                "stacking": {
+                  "mode": "none"
+                }
+              },
+              "color": {
+                "mode": "palette-classic"
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom",
+              "calcs": [
+                "mean",
+                "max"
+              ]
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "expr": "sum by (namespace, pod) (increase(kube_pod_container_status_restarts_total[5m])) > 0",
+              "legendFormat": "{{namespace}}/{{pod}}",
+              "refId": "A",
+              "range": true,
+              "editorMode": "code"
+            }
+          ]
+        },
+        {
+          "type": "timeseries",
+          "title": "Pods by phase",
+          "description": "A Pending band that does not clear usually means the scheduler found no node - memory, a taint, or a topology spread constraint.",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "gridPos": {
+            "x": 12,
+            "y": 25,
+            "w": 12,
+            "h": 7
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "custom": {
+                "lineWidth": 2,
+                "fillOpacity": 12,
+                "showPoints": "never",
+                "stacking": {
+                  "mode": "normal"
+                }
+              },
+              "color": {
+                "mode": "palette-classic"
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom",
+              "calcs": [
+                "mean",
+                "max"
+              ]
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "expr": "sum by (phase) (kube_pod_status_phase)",
+              "legendFormat": "{{phase}}",
+              "refId": "A",
+              "range": true,
+              "editorMode": "code"
+            }
+          ]
+        }
+      ]
+    }
