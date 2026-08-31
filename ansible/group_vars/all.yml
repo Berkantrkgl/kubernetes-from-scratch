@@ -24,4 +24,21 @@ metallb_chart_version: "0.16.1"
 ingress_chart_version: "2.6.4"    # nginx/kubernetes-ingress, not kubernetes/ingress-nginx
 local_path_version: "v0.0.37"
 
-jenkins_node: node-2              # the case's "Node 3"
+jenkins_chart_version: "5.9.54"
+kps_chart_version: "88.5.4"       # kube-prometheus-stack
+eck_chart_version: "3.5.0"
+fluent_bit_chart_version: "0.58.1"
+
+# elasticsearch's own version is in k8s/monitoring/05-elasticsearch.yaml, since that
+# is a manifest rather than a chart flag. one source of truth, not two
+
+# node roles, by label rather than by name so a rename does not break them
+node_labels:
+  - { node: node-2, key: workload,   value: jenkins }   # the case's "Node 3"
+  - { node: node-2, key: monitoring, value: metrics }   # prometheus, grafana
+  - { node: node-1, key: monitoring, value: logs }      # elasticsearch
+
+jenkins_node: node-2
+
+# every hostname ExternalDNS creates lives under this zone
+dns_zone: "k8s.berkan.link"

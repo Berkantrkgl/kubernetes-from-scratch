@@ -1,0 +1,214 @@
+---
+# Elasticsearch, Prometheus, AlertManager, Grafana and fluent-bit, all in the
+# monitoring namespace.
+#
+#   ansible-playbook playbooks/06-monitoring.yml
+#
+# Elasticsearch comes first on purpose: Grafana reads its password from a Secret ECK
+# creates, and without it the Grafana pod never starts.
+
+- name: Deploy the observability stack
+  hosts: control_plane
+  become: true
+
+  environment:
+    KUBECONFIG: /etc/kubernetes/admin.conf
+
+  vars:
+    log_index_template:
+      index_patterns: ["k8s-*", "query-echo-*"]
+      priority: 500
+      template:
+        settings:
+          number_of_shards: 1
+          number_of_replicas: 0
+
+  tasks:
+
+    - name: Create the monitoring namespace
+      ansible.builtin.command: kubectl create namespace monitoring
+      register: monitoring_ns
+      changed_when: monitoring_ns.rc == 0
+      failed_when: monitoring_ns.rc != 0 and 'AlreadyExists' not in monitoring_ns.stderr
+      tags: [namespace]
+
+    - name: Install the ECK operator
+      kubernetes.core.helm:
+        name: elastic-operator
+        chart_ref: eck-operator
+        chart_repo_url: https://helm.elastic.co
+        chart_version: "{{ eck_chart_version }}"
+        release_namespace: elastic-system
+        create_namespace: true
+        values_files: [/vagrant/cluster/eck/values.yaml]
+        state: present
+      tags: [eck]
+
+    # its admission webhook rejects the Elasticsearch resource until it is serving
+    - name: Wait for the ECK operator
+      ansible.builtin.command: >-
+        kubectl -n elastic-system rollout status statefulset/elastic-operator
+        --timeout=300s
+      changed_when: false
+      tags: [eck]
+
+    - name: Apply the Elasticsearch resource
+      ansible.builtin.command: kubectl apply -f /vagrant/k8s/monitoring/05-elasticsearch.yaml
+      register: es_apply
+      changed_when: "'created' in es_apply.stdout or 'configured' in es_apply.stdout"
+      tags: [elasticsearch]
+
+    # Ready, not health=green: on a single node any index carrying a replica leaves
+    # the cluster yellow for good, and yellow elasticsearch answers queries fine
+    - name: Wait for Elasticsearch
+      ansible.builtin.command: >-
+        kubectl -n monitoring wait --for=jsonpath={.status.phase}=Ready
+        elasticsearch/logs --timeout=900s
+      changed_when: false
+      tags: [elasticsearch]
+
+    - name: Read the Elasticsearch password
+      ansible.builtin.command: >-
+        kubectl -n monitoring get secret logs-es-elastic-user
+        -o jsonpath={.data.elastic}
+      register: es_password_b64
+      changed_when: false
+      no_log: true
+      tags: [template]
+
+    # from inside the pod, not through the ingress: that route needs ExternalDNS to
+    # have reconciled first, and localhost needs nothing
+    - name: Look for the log index template
+      ansible.builtin.command: >-
+        kubectl -n monitoring exec logs-es-default-0 -c elasticsearch --
+        curl -s -o /dev/null -w %{http_code}
+        -u elastic:{{ es_password_b64.stdout | b64decode }}
+        http://localhost:9200/_index_template/app-logs
+      register: es_template
+      changed_when: false
+      failed_when: false
+      no_log: true
+      tags: [template]
+
+    # before fluent-bit, or the first index of a fresh cluster is created without it
+    # and keeps the default of one replica, which a single node can never allocate.
+    # not named "logs" -- that collides with an x-pack managed template and x-pack
+    # quietly restores its own
+    - name: Create the log index template
+      ansible.builtin.command: >-
+        kubectl -n monitoring exec logs-es-default-0 -c elasticsearch --
+        curl -s -X PUT -H Content-Type:application/json
+        -u elastic:{{ es_password_b64.stdout | b64decode }}
+        http://localhost:9200/_index_template/app-logs
+        -d {{ log_index_template | to_json | quote }}
+      when: es_template.stdout != "200"
+      no_log: true
+      tags: [template]
+
+    # a template only reaches indices created after it, so anything already there is
+    # converged separately
+    - name: Drop replicas on any existing log index
+      ansible.builtin.command: >-
+        kubectl -n monitoring exec logs-es-default-0 -c elasticsearch --
+        curl -s -X PUT -H Content-Type:application/json
+        -u elastic:{{ es_password_b64.stdout | b64decode }}
+        {{ ('http://localhost:9200/k8s-*,query-echo-*/_settings'
+            + '?ignore_unavailable=true&allow_no_indices=true') | quote }}
+        -d {{ {'index': {'number_of_replicas': 0}} | to_json | quote }}
+      changed_when: false
+      no_log: true
+      tags: [template]
+
+    - name: Look for the Grafana admin credential
+      ansible.builtin.command: kubectl -n monitoring get secret grafana-admin
+      register: grafana_secret
+      changed_when: false
+      failed_when: false
+      tags: [prometheus]
+
+    - name: Generate a Grafana admin password
+      ansible.builtin.command: openssl rand -base64 24
+      register: grafana_password
+      when: grafana_secret.rc != 0
+      changed_when: false
+      no_log: true
+      tags: [prometheus]
+
+    # generated on the node and never written to the repository, the same shape as
+    # the secretbox key in 02-control-plane.yml
+    - name: Create the Grafana admin credential
+      ansible.builtin.command: kubectl apply -f -
+      args:
+        stdin: |
+          apiVersion: v1
+          kind: Secret
+          metadata:
+            name: grafana-admin
+            namespace: monitoring
+          type: Opaque
+          data:
+            admin-user: {{ 'admin' | b64encode }}
+            admin-password: {{ grafana_password.stdout | trim | b64encode }}
+      when: grafana_secret.rc != 0
+      no_log: true
+      tags: [prometheus]
+
+    - name: Install kube-prometheus-stack
+      kubernetes.core.helm:
+        name: kps
+        chart_ref: kube-prometheus-stack
+        chart_repo_url: https://prometheus-community.github.io/helm-charts
+        chart_version: "{{ kps_chart_version }}"
+        release_namespace: monitoring
+        values_files: [/vagrant/cluster/monitoring/values.yaml]
+        state: present
+      tags: [prometheus]
+
+    # helm returns once the custom resources are accepted, and the operator turns
+    # them into StatefulSets a moment later. rollout status does not wait for an
+    # object to appear, it fails on NotFound, so the existence check comes first
+    - name: Wait for the Prometheus StatefulSet to appear
+      ansible.builtin.command: >-
+        kubectl -n monitoring wait --for=create
+        statefulset/prometheus-kps-prometheus --timeout=300s
+      changed_when: false
+      tags: [prometheus]
+
+    - name: Wait for Prometheus
+      ansible.builtin.command: >-
+        kubectl -n monitoring rollout status statefulset/prometheus-kps-prometheus
+        --timeout=600s
+      changed_when: false
+      tags: [prometheus]
+
+    - name: Wait for Grafana
+      ansible.builtin.command: >-
+        kubectl -n monitoring rollout status deployment/kps-grafana --timeout=300s
+      changed_when: false
+      tags: [prometheus]
+
+    - name: Install fluent-bit
+      kubernetes.core.helm:
+        name: fluent-bit
+        chart_ref: fluent-bit
+        chart_repo_url: https://fluent.github.io/helm-charts
+        chart_version: "{{ fluent_bit_chart_version }}"
+        release_namespace: monitoring
+        values_files: [/vagrant/cluster/fluent-bit/values.yaml]
+        state: present
+      tags: [fluentbit]
+
+    - name: Wait for fluent-bit on every node
+      ansible.builtin.command: >-
+        kubectl -n monitoring rollout status daemonset/fluent-bit --timeout=300s
+      changed_when: false
+      tags: [fluentbit]
+
+    # ingress, the two monitors, the alert rules and the dashboard. the Elasticsearch
+    # resource is in here too and apply is idempotent, so it costs nothing
+    - name: Apply the monitoring manifests
+      ansible.builtin.command: kubectl apply -f /vagrant/k8s/monitoring/
+      register: monitoring_apply
+      changed_when: "'created' in monitoring_apply.stdout or 'configured' in monitoring_apply.stdout"
+      tags: [manifests]
+

@@ -1,0 +1,66 @@
+---
+# ExternalDNS against Route53. Before the components whose hostnames it creates.
+#
+#   ansible-playbook playbooks/05-externaldns.yml -e @../docs/route53.yml
+#
+# The AWS key cannot be generated here. Supply it once; after that the Secret it
+# created is what this finds.
+
+- name: Deploy ExternalDNS
+  hosts: control_plane
+  become: true
+
+  environment:
+    KUBECONFIG: /etc/kubernetes/admin.conf
+
+  tasks:
+
+    - name: Apply the ExternalDNS manifests
+      ansible.builtin.command: kubectl apply -f /vagrant/k8s/externaldns/
+      register: externaldns_apply
+      changed_when: "'created' in externaldns_apply.stdout or 'configured' in externaldns_apply.stdout"
+      tags: [externaldns]
+
+    - name: Look for the Route53 credential
+      ansible.builtin.command: kubectl -n external-dns get secret route53-credentials
+      register: route53_secret
+      changed_when: false
+      failed_when: false
+      tags: [externaldns]
+
+    # stopping here is louder than the alternative: the pod would sit in
+    # CreateContainerConfigError and say nothing about a missing variable
+    - name: Refuse to continue without a credential
+      ansible.builtin.fail:
+        msg: >-
+          Secret route53-credentials is absent and no credential was supplied.
+          Re-run with -e @../docs/route53.yml
+      when:
+        - route53_secret.rc != 0
+        - route53_access_key_id is not defined
+      tags: [externaldns]
+
+    # the manifest goes in on stdin, so argv holds no key material
+    - name: Create the Route53 credential
+      ansible.builtin.command: kubectl apply -f -
+      args:
+        stdin: |
+          apiVersion: v1
+          kind: Secret
+          metadata:
+            name: route53-credentials
+            namespace: external-dns
+          type: Opaque
+          data:
+            aws-access-key-id: {{ route53_access_key_id | b64encode }}
+            aws-secret-access-key: {{ route53_secret_access_key | b64encode }}
+      when: route53_secret.rc != 0
+      no_log: true
+      tags: [externaldns]
+
+    - name: Wait for ExternalDNS
+      ansible.builtin.command: >-
+        kubectl -n external-dns wait --for=condition=Available
+        deployment/external-dns --timeout=180s
+      changed_when: false
+      tags: [externaldns]

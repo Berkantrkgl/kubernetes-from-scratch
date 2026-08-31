@@ -1,0 +1,67 @@
+---
+# The application. Imported by site.yml, and called again by the deployment pipeline
+# with an image tag -- requirement 2.3 asks Ansible to apply the manifests.
+#
+#   ansible-playbook playbooks/08-app.yml
+#   ansible-playbook playbooks/08-app.yml -e app_image_tag=0.3.0
+#
+# After 06: the fluent-bit sidecar needs the Elasticsearch credential, and a native
+# sidecar has to be ready before the application container starts.
+
+- name: Deploy the application
+  hosts: control_plane
+  become: true
+
+  environment:
+    KUBECONFIG: /etc/kubernetes/admin.conf
+
+  tasks:
+
+    - name: Apply the application manifests
+      ansible.builtin.command: kubectl apply -f /vagrant/k8s/app/
+      register: app_apply
+      changed_when: "'created' in app_apply.stdout or 'configured' in app_apply.stdout"
+      tags: [app]
+
+    - name: Read the Elasticsearch password
+      ansible.builtin.command: >-
+        kubectl -n monitoring get secret logs-es-elastic-user
+        -o jsonpath={.data.elastic}
+      register: es_password_b64
+      changed_when: false
+      no_log: true
+      tags: [app]
+
+    # Secrets do not cross namespaces, so the sidecar gets a copy. Copied rather than
+    # generated, because Elasticsearch owns the original
+    - name: Copy the Elasticsearch credential into the application namespace
+      ansible.builtin.command: kubectl apply -f -
+      args:
+        stdin: |
+          apiVersion: v1
+          kind: Secret
+          metadata:
+            name: elasticsearch-credentials
+            namespace: query-echo
+          type: Opaque
+          data:
+            password: {{ es_password_b64.stdout }}
+      register: es_copy
+      changed_when: "'created' in es_copy.stdout or 'configured' in es_copy.stdout"
+      no_log: true
+      tags: [app]
+
+    # only when the pipeline asks. left out, the manifest decides which image runs,
+    # which is the property mds/docker.md wants kept
+    - name: Point the deployment at a specific image
+      ansible.builtin.command: >-
+        kubectl -n query-echo set image deployment/query-echo
+        query-echo=berkantrkgl/query-echo:{{ app_image_tag }}
+      when: app_image_tag is defined
+      tags: [app]
+
+    - name: Wait for the rollout
+      ansible.builtin.command: >-
+        kubectl -n query-echo rollout status deployment/query-echo --timeout=600s
+      changed_when: false
+      tags: [app]

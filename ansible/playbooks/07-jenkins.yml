@@ -1,0 +1,75 @@
+---
+# Jenkins on the node the case calls Node 3, pinned by the label 04 applies.
+#
+#   ansible-playbook playbooks/07-jenkins.yml
+#
+# After the monitoring stack, so its startup is visible in Grafana and its logs are
+# already being collected.
+
+- name: Deploy Jenkins
+  hosts: control_plane
+  become: true
+
+  environment:
+    KUBECONFIG: /etc/kubernetes/admin.conf
+
+  tasks:
+
+    - name: Create the jenkins namespace
+      ansible.builtin.command: kubectl create namespace jenkins
+      register: jenkins_ns
+      changed_when: jenkins_ns.rc == 0
+      failed_when: jenkins_ns.rc != 0 and 'AlreadyExists' not in jenkins_ns.stderr
+      tags: [jenkins]
+
+    - name: Look for the Jenkins admin credential
+      ansible.builtin.command: kubectl -n jenkins get secret jenkins-admin
+      register: jenkins_secret
+      changed_when: false
+      failed_when: false
+      tags: [jenkins]
+
+    - name: Generate a Jenkins admin password
+      ansible.builtin.command: openssl rand -base64 24
+      register: jenkins_password
+      when: jenkins_secret.rc != 0
+      changed_when: false
+      no_log: true
+      tags: [jenkins]
+
+    # the chart reuses this rather than creating its own, which needs an odd pair of
+    # values to work at all -- see mds/jenkins.md
+    - name: Create the Jenkins admin credential
+      ansible.builtin.command: kubectl apply -f -
+      args:
+        stdin: |
+          apiVersion: v1
+          kind: Secret
+          metadata:
+            name: jenkins-admin
+            namespace: jenkins
+          type: Opaque
+          data:
+            jenkins-admin-user: {{ 'admin' | b64encode }}
+            jenkins-admin-password: {{ jenkins_password.stdout | trim | b64encode }}
+      when: jenkins_secret.rc != 0
+      no_log: true
+      tags: [jenkins]
+
+    - name: Install Jenkins
+      kubernetes.core.helm:
+        name: jenkins
+        chart_ref: jenkins
+        chart_repo_url: https://charts.jenkins.io
+        chart_version: "{{ jenkins_chart_version }}"
+        release_namespace: jenkins
+        values_files: [/vagrant/cluster/jenkins/values.yaml]
+        state: present
+      tags: [jenkins]
+
+    # slower than the manifest suggests: an init container downloads the plugins
+    - name: Wait for Jenkins
+      ansible.builtin.command: >-
+        kubectl -n jenkins rollout status statefulset/jenkins --timeout=600s
+      changed_when: false
+      tags: [jenkins]

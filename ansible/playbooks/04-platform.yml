@@ -1,6 +1,6 @@
 ---
-# CNI, LoadBalancer and ingress. Runs from the control plane, which is where the
-# kubeconfig and helm live. Safe to re-run.
+# CNI, LoadBalancer, ingress and storage. Runs from the control plane, which is where
+# the kubeconfig and helm live. Safe to re-run.
 #
 #   ansible-playbook playbooks/04-platform.yml
 
@@ -13,29 +13,14 @@
 
   tasks:
 
-    - name: Add the Helm repositories
-      ansible.builtin.command: "helm repo add {{ item.name }} {{ item.url }} --force-update"
-      loop:
-        - { name: projectcalico, url: "https://docs.tigera.io/calico/charts" }
-        - { name: metallb, url: "https://metallb.github.io/metallb" }
-      loop_control:
-        label: "{{ item.name }}"
-      changed_when: false
-      tags: [helm]
-
-    - name: List the installed Helm releases
-      ansible.builtin.command: helm list --all-namespaces --short
-      register: helm_releases
-      changed_when: false
-      tags: [helm]
-
-    # server-side because some Calico CRDs are larger than the 262 KB annotation
-    # that client-side apply writes. Separate chart, not a release -- Helm never
-    # upgrades CRDs it owns
+    # server-side because some Calico CRDs are larger than the 262 KB annotation that
+    # client-side apply writes. A separate chart, not a release -- Helm never upgrades
+    # CRDs it owns
     - name: Install the Calico CRDs
       ansible.builtin.shell: >-
         set -o pipefail &&
-        helm template calico-crds projectcalico/crd.projectcalico.org.v1
+        helm template calico-crds crd.projectcalico.org.v1
+        --repo https://docs.tigera.io/calico/charts
         --version {{ calico_version }}
         | kubectl apply --server-side -f -
       args:
@@ -46,12 +31,15 @@
       tags: [calico]
 
     - name: Install Calico
-      ansible.builtin.command: >-
-        helm install calico projectcalico/tigera-operator
-        --version {{ calico_version }}
-        --namespace tigera-operator --create-namespace
-        -f /vagrant/cluster/calico/values.yaml
-      when: "'calico' not in helm_releases.stdout_lines"
+      kubernetes.core.helm:
+        name: calico
+        chart_ref: tigera-operator
+        chart_repo_url: https://docs.tigera.io/calico/charts
+        chart_version: "{{ calico_version }}"
+        release_namespace: tigera-operator
+        create_namespace: true
+        values_files: [/vagrant/cluster/calico/values.yaml]
+        state: present
       tags: [calico]
 
     - name: Wait for every node to report Ready
@@ -60,12 +48,15 @@
       tags: [calico]
 
     - name: Install MetalLB
-      ansible.builtin.command: >-
-        helm install metallb metallb/metallb
-        --version {{ metallb_chart_version }}
-        --namespace metallb-system --create-namespace
-        -f /vagrant/cluster/metallb/values.yaml
-      when: "'metallb' not in helm_releases.stdout_lines"
+      kubernetes.core.helm:
+        name: metallb
+        chart_ref: metallb
+        chart_repo_url: https://metallb.github.io/metallb
+        chart_version: "{{ metallb_chart_version }}"
+        release_namespace: metallb-system
+        create_namespace: true
+        values_files: [/vagrant/cluster/metallb/values.yaml]
+        state: present
       tags: [metallb]
 
     # the address pool is rejected until MetalLB's admission webhook is serving
@@ -82,14 +73,16 @@
       changed_when: "'configured' in metallb_pool.stdout or 'created' in metallb_pool.stdout"
       tags: [metallb]
 
-    # OCI registry, so there is no repo to add
+    # an OCI registry, so the chart is pulled the way a container image is
     - name: Install the NGINX ingress controller
-      ansible.builtin.command: >-
-        helm install nginx-ingress oci://ghcr.io/nginx/charts/nginx-ingress
-        --version {{ ingress_chart_version }}
-        --namespace nginx-ingress --create-namespace
-        -f /vagrant/cluster/ingress/values.yaml
-      when: "'nginx-ingress' not in helm_releases.stdout_lines"
+      kubernetes.core.helm:
+        name: nginx-ingress
+        chart_ref: oci://ghcr.io/nginx/charts/nginx-ingress
+        chart_version: "{{ ingress_chart_version }}"
+        release_namespace: nginx-ingress
+        create_namespace: true
+        values_files: [/vagrant/cluster/ingress/values.yaml]
+        state: present
       tags: [ingress]
 
     - name: Look for the local-path provisioner
@@ -120,16 +113,25 @@
       when: "'local-path (default)' not in storage_classes.stdout"
       tags: [storage]
 
-    - name: Read the workload label on the Jenkins node
+    - name: Read the current node labels
       ansible.builtin.command: >-
-        kubectl get node {{ jenkins_node }}
-        -o jsonpath={.metadata.labels.workload}
-      register: jenkins_label
+        kubectl get node {{ item.node }}
+        -o jsonpath={.metadata.labels.{{ item.key }}}
+      loop: "{{ node_labels }}"
+      loop_control:
+        label: "{{ item.node }} {{ item.key }}"
+      register: current_labels
       changed_when: false
       tags: [labels]
 
-    # a label rather than a node name, so the constraint survives a rename
-    - name: Label the Jenkins node
-      ansible.builtin.command: kubectl label node {{ jenkins_node }} workload=jenkins
-      when: jenkins_label.stdout != "jenkins"
+    # labels rather than node names, so every nodeSelector downstream survives a
+    # rename. kubectl label is not idempotent on its own, hence the read above
+    - name: Label the nodes
+      ansible.builtin.command: >-
+        kubectl label node {{ item.item.node }}
+        {{ item.item.key }}={{ item.item.value }} --overwrite
+      loop: "{{ current_labels.results }}"
+      loop_control:
+        label: "{{ item.item.node }} {{ item.item.key }}={{ item.item.value }}"
+      when: item.stdout != item.item.value
       tags: [labels]
