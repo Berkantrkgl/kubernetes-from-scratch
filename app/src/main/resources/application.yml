@@ -1,0 +1,24 @@
+server:
+  port: 9001
+  shutdown: graceful
+
+spring:
+  application:
+    name: query-echo
+  main:
+    # the banner goes straight to System.out otherwise, before logging is configured
+    banner-mode: log
+  lifecycle:
+    # in-flight requests finish instead of being cut off mid-response on SIGTERM
+    timeout-per-shutdown-phase: 25s
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus
+  endpoint:
+    health:
+      # splits /actuator/health into a readiness and a liveness group
+      probes:
+        enabled: true
