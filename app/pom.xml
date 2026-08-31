@@ -13,7 +13,7 @@
 
 	<groupId>dev.berkan</groupId>
 	<artifactId>query-echo</artifactId>
-	<version>0.1.0</version>
+	<version>0.1.1</version>
 	<name>query-echo</name>
 	<description>Prints the query string parameters of its endpoint</description>
 

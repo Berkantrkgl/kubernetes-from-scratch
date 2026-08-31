@@ -2,6 +2,10 @@ server:
   port: 9001
   shutdown: graceful
 
+app:
+  # kubernetes sets HOSTNAME to the pod name, no downward api needed
+  instance: ${HOSTNAME:local}
+
 spring:
   application:
     name: query-echo
