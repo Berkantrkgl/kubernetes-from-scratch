@@ -9,6 +9,8 @@ app:
 spring:
   application:
     name: query-echo
+    # filtered by maven at build time, lands in the ecs log line as service.version
+    version: "@project.version@"
   main:
     # the banner goes straight to System.out otherwise, before logging is configured
     banner-mode: log
@@ -26,3 +28,9 @@ management:
       # splits /actuator/health into a readiness and a liveness group
       probes:
         enabled: true
+  metrics:
+    distribution:
+      # without this micrometer emits count, sum and max but no buckets, and
+      # histogram_quantile has nothing to read
+      percentiles-histogram:
+        http.server.requests: true

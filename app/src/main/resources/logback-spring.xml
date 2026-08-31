@@ -10,8 +10,10 @@
 
 		<appender name="FILE" class="ch.qos.logback.core.rolling.RollingFileAppender">
 			<file>${LOG_DIR}/application.log</file>
-			<encoder>
-				<pattern>${FILE_LOG_PATTERN}</pattern>
+			<!-- ECS json instead of a pattern: fluent-bit needs no regex parser and a
+			     stack trace stays one event instead of becoming forty -->
+			<encoder class="org.springframework.boot.logging.logback.StructuredLogEncoder">
+				<format>ecs</format>
 			</encoder>
 			<rollingPolicy class="ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy">
 				<fileNamePattern>${LOG_DIR}/application.%d{yyyy-MM-dd}.%i.log.gz</fileNamePattern>
