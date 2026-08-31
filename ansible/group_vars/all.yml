@@ -1,4 +1,9 @@
 ---
+# interpreter discovery probes a dozen candidates and falls back to /usr/bin/python,
+# which 24.04 does not have, when the probe comes back empty. It did once, seconds after
+# vagrant up. The box is pinned, so the interpreter can be too
+ansible_python_interpreter: /usr/bin/python3
+
 kubernetes_version: "1.36.4"
 kubernetes_apt_channel: "v1.36"   # repo is per minor, package version is per patch
 

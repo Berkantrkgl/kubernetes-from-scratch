@@ -52,9 +52,14 @@
       changed_when: false
       tags: [eck]
 
+    # retried for the same reason as MetalLB's pool in 04: the operator being rolled out
+    # says nothing about its validating webhook accepting connections yet
     - name: Apply the Elasticsearch resource
       ansible.builtin.command: kubectl apply -f /vagrant/k8s/monitoring/elasticsearch.yaml
       register: es_apply
+      until: es_apply.rc == 0
+      retries: 12
+      delay: 5
       changed_when: "'created' in es_apply.stdout or 'configured' in es_apply.stdout"
       tags: [elasticsearch]
 

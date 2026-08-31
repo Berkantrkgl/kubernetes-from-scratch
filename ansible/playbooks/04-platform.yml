@@ -59,7 +59,6 @@
         state: present
       tags: [metallb]
 
-    # the address pool is rejected until MetalLB's admission webhook is serving
     - name: Wait for the MetalLB controller
       ansible.builtin.command: >-
         kubectl wait --for=condition=Available deployment/metallb-controller
@@ -67,9 +66,16 @@
       changed_when: false
       tags: [metallb]
 
+    # Available is not enough: it follows the readiness probe, which polls :17472,
+    # while the validating webhook listens on :9443. So the deployment can be ready
+    # while the pool is still rejected with connection refused. Retrying an
+    # idempotent apply is the only honest way to wait for a webhook
     - name: Apply the MetalLB address pool
       ansible.builtin.command: kubectl apply -f /vagrant/cluster/metallb/pool.yaml
       register: metallb_pool
+      until: metallb_pool.rc == 0
+      retries: 12
+      delay: 5
       changed_when: "'configured' in metallb_pool.stdout or 'created' in metallb_pool.stdout"
       tags: [metallb]
 
