@@ -51,9 +51,60 @@ spec:
         seccompProfile:
           type: RuntimeDefault
 
+      # a native sidecar, not a plain container: it starts before the application
+      # so no line is missed, and it is stopped only after the application has
+      # exited so the shutdown lines still get shipped
+      initContainers:
+        - name: fluent-bit
+          image: fluent/fluent-bit:5.1.1
+          restartPolicy: Always
+
+          env:
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+            - name: ES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: elasticsearch-credentials
+                  key: password
+
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+
+          resources:
+            requests:
+              cpu: 25m
+              memory: 64Mi
+            limits:
+              memory: 128Mi
+
+          volumeMounts:
+            - name: logs
+              mountPath: /var/log/query-echo
+              readOnly: true
+            - name: fluent-bit-state
+              mountPath: /var/lib/fluent-bit
+            # a subPath, so the image's own parsers.conf next to it survives
+            - name: fluent-bit-config
+              mountPath: /fluent-bit/etc/fluent-bit.conf
+              subPath: fluent-bit.conf
+
       containers:
         - name: query-echo
-          image: berkantrkgl/query-echo:0.1.1
+          image: berkantrkgl/query-echo:0.2.1
 
           ports:
             - name: http
@@ -111,9 +162,16 @@ spec:
             - name: logs
               mountPath: /var/log/query-echo
 
-      # the only two paths the read-only root filesystem has to give up
       volumes:
+        # the only two paths the application's read-only root filesystem gives up
         - name: tmp
           emptyDir: {}
         - name: logs
           emptyDir: {}
+
+        # the sidecar's tail position, kept out of the log directory on purpose
+        - name: fluent-bit-state
+          emptyDir: {}
+        - name: fluent-bit-config
+          configMap:
+            name: fluent-bit-sidecar

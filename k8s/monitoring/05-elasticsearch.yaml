@@ -1,0 +1,55 @@
+apiVersion: elasticsearch.k8s.elastic.co/v1
+kind: Elasticsearch
+metadata:
+  name: logs
+  # the whole observability stack lives here. an Ingress can only name Services in
+  # its own namespace, and requirement 6.c puts elasticsearch on the same hostname
+  # as prometheus and grafana
+  namespace: monitoring
+spec:
+  # 9.4.6 is in Elastic's release list but has no container image. the registry is
+  # the source that matters, not artifacts-api
+  version: 9.4.5
+
+  http:
+    tls:
+      selfSignedCertificate:
+        # nothing else in this cluster encrypts pod-to-pod traffic, so terminating
+        # a self-signed cert in three consumers buys appearance, not security.
+        # authentication stays on. see mds/logging.md
+        disabled: true
+
+  nodeSets:
+    - name: default
+      count: 1
+      config:
+        node.roles: [master, data, ingest]
+        # vm.max_map_count is raised in 01-node-prep.yml, so mmap stays on
+        node.store.allow_mmap: true
+
+      podTemplate:
+        spec:
+          nodeSelector:
+            monitoring: logs
+          containers:
+            - name: elasticsearch
+              env:
+                # half the container limit, which is Elastic's own guidance
+                - name: ES_JAVA_OPTS
+                  value: -Xms1g -Xmx1g
+              resources:
+                requests:
+                  cpu: 500m
+                  memory: 2Gi
+                limits:
+                  memory: 2Gi
+
+      volumeClaimTemplates:
+        - metadata:
+            name: elasticsearch-data
+          spec:
+            accessModes: [ReadWriteOnce]
+            storageClassName: local-path
+            resources:
+              requests:
+                storage: 5Gi

@@ -1,0 +1,15 @@
+resources:
+  requests:
+    cpu: 100m
+    memory: 150Mi
+  limits:
+    memory: 512Mi          # chart ships 1Gi and a cpu limit, neither is needed here
+
+# off by default. the ingress controller's metrics were enabled for the same
+# reason in mds/ingress.md: the component that watches everything gets watched
+config:
+  metrics:
+    port: "8080"
+
+podMonitor:
+  enabled: true
