@@ -1,0 +1,21 @@
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: query-echo
+  namespace: query-echo
+  labels:
+    app.kubernetes.io/name: query-echo
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: app.k8s.local
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: query-echo
+                port:
+                  name: http

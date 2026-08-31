@@ -1,0 +1,119 @@
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: query-echo
+  namespace: query-echo
+  labels:
+    app.kubernetes.io/name: query-echo
+spec:
+  replicas: 4
+
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: query-echo
+
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0   # never drop below four ready pods during a rollout
+
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: query-echo
+
+    spec:
+      # longer than the 25s graceful shutdown plus the preStop sleep
+      terminationGracePeriodSeconds: 40
+
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: DoNotSchedule
+          # the default is Ignore, which counts the tainted control plane as an
+          # empty domain and leaves two of the four pods Pending
+          nodeTaintsPolicy: Honor
+          # spread is computed per revision, otherwise old and new pods are
+          # counted together and a rollout deadlocks against DoNotSchedule
+          matchLabelKeys:
+            - pod-template-hash
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: query-echo
+
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532          # makes the emptyDir volumes writable by that uid
+        seccompProfile:
+          type: RuntimeDefault
+
+      containers:
+        - name: query-echo
+          image: berkantrkgl/query-echo:0.1.1
+
+          ports:
+            - name: http
+              containerPort: 9001
+
+          env:
+            - name: SPRING_PROFILES_ACTIVE
+              value: k8s
+
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              memory: 512Mi    # no cpu limit, throttling hurts more than it protects
+
+          # liveness stays parked until this passes, so a slow start is not a restart
+          startupProbe:
+            httpGet:
+              path: /actuator/health/readiness
+              port: http
+            periodSeconds: 2
+            failureThreshold: 30
+
+          readinessProbe:
+            httpGet:
+              path: /actuator/health/readiness
+              port: http
+            periodSeconds: 5
+            failureThreshold: 3
+
+          livenessProbe:
+            httpGet:
+              path: /actuator/health/liveness
+              port: http
+            periodSeconds: 10
+            failureThreshold: 3
+
+          lifecycle:
+            preStop:
+              # distroless has no shell, so the exec form of this cannot run.
+              # buys time for the endpoint removal to reach every kube-proxy
+              sleep:
+                seconds: 5
+
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+            - name: logs
+              mountPath: /var/log/query-echo
+
+      # the only two paths the read-only root filesystem has to give up
+      volumes:
+        - name: tmp
+          emptyDir: {}
+        - name: logs
+          emptyDir: {}

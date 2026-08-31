@@ -1,0 +1,17 @@
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: query-echo
+  namespace: query-echo
+  labels:
+    app.kubernetes.io/name: query-echo
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: query-echo
+  ports:
+    - name: http
+      port: 80
+      # by name, so the container port can move without touching this file
+      targetPort: http
