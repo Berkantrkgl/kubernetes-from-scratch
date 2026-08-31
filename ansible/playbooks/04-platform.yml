@@ -92,6 +92,34 @@
       when: "'nginx-ingress' not in helm_releases.stdout_lines"
       tags: [ingress]
 
+    - name: Look for the local-path provisioner
+      ansible.builtin.command: kubectl get deployment local-path-provisioner -n local-path-storage
+      register: local_path_state
+      changed_when: false
+      failed_when: false
+      tags: [storage]
+
+    - name: Install the local-path provisioner
+      ansible.builtin.command: >-
+        kubectl apply -f
+        https://raw.githubusercontent.com/rancher/local-path-provisioner/{{ local_path_version }}/deploy/local-path-storage.yaml
+      when: local_path_state.rc != 0
+      tags: [storage]
+
+    - name: Read the storage classes
+      ansible.builtin.command: kubectl get storageclass
+      register: storage_classes
+      changed_when: false
+      tags: [storage]
+
+    # annotate not patch, the command module's shlex eats the quotes JSON needs
+    - name: Make local-path the default storage class
+      ansible.builtin.command: >-
+        kubectl annotate storageclass local-path
+        storageclass.kubernetes.io/is-default-class=true --overwrite
+      when: "'local-path (default)' not in storage_classes.stdout"
+      tags: [storage]
+
     - name: Read the workload label on the Jenkins node
       ansible.builtin.command: >-
         kubectl get node {{ jenkins_node }}
