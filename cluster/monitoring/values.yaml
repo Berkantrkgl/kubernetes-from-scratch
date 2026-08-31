@@ -1,0 +1,187 @@
+# without this every object is named kps-kube-prometheus-stack-<thing>
+fullnameOverride: kps
+
+prometheus:
+  prometheusSpec:
+    nodeSelector:
+      monitoring: metrics
+
+    # each app serves its own subpath instead of the ingress rewriting it
+    externalUrl: http://monitor.k8s.berkan.link/prometheus
+    routePrefix: /prometheus
+
+    retention: 7d
+    retentionSize: 6GiB          # tsdb has to stop before the 8Gi volume does
+
+    # chart default is emptyDir, so a restart drops every sample
+    storageSpec:
+      volumeClaimTemplate:
+        spec:
+          storageClassName: local-path
+          accessModes: [ReadWriteOnce]
+          resources:
+            requests:
+              storage: 8Gi
+
+    # left true, these selectors only match objects carrying this release's labels
+    serviceMonitorSelectorNilUsesHelmValues: false
+    podMonitorSelectorNilUsesHelmValues: false
+    ruleSelectorNilUsesHelmValues: false
+    probeSelectorNilUsesHelmValues: false
+    scrapeConfigSelectorNilUsesHelmValues: false
+
+    resources:
+      requests:
+        cpu: 200m
+        memory: 1Gi
+      limits:
+        memory: 1536Mi
+
+alertmanager:
+  # this replaces the chart's default config outright, so the Watchdog route and
+  # the null receiver have to be carried over
+  config:
+    route:
+      group_by: [namespace, alertname]
+      group_wait: 30s
+      group_interval: 5m
+      repeat_interval: 12h
+      receiver: "null"
+      routes:
+        - receiver: "null"
+          matchers: ['alertname = "Watchdog"']
+        - receiver: pod-restart
+          matchers: ['alertname = "PodRestarted"']
+          group_wait: 10s
+          repeat_interval: 1h
+    receivers:
+      - name: "null"
+      # no *_configs: there is no channel to deliver to here, see mds/monitoring.md
+      - name: pod-restart
+
+  # deliberately not pinned to monitoring=metrics like the rest of the stack: its
+  # volume is node-local, so moving it now would mean deleting that volume
+  alertmanagerSpec:
+    externalUrl: http://monitor.k8s.berkan.link/alertmanager
+    routePrefix: /alertmanager
+
+    storage:
+      volumeClaimTemplate:
+        spec:
+          storageClassName: local-path
+          accessModes: [ReadWriteOnce]
+          resources:
+            requests:
+              storage: 1Gi
+
+    resources:
+      requests:
+        cpu: 50m
+        memory: 128Mi
+      limits:
+        memory: 256Mi
+
+grafana:
+  # node-1 is the logging node and elasticsearch needs the room there
+  nodeSelector:
+    monitoring: metrics
+
+  admin:
+    existingSecret: grafana-admin
+    userKey: admin-user
+    passwordKey: admin-password
+
+  grafana.ini:
+    server:
+      root_url: http://monitor.k8s.berkan.link/grafana
+      serve_from_sub_path: true
+
+  # dashboards are provisioned from ConfigMaps, nothing here is worth a volume
+  persistence:
+    enabled: false
+
+  # the secret is in this namespace, so the password never enters this file
+  envValueFrom:
+    ES_PASSWORD:
+      secretKeyRef:
+        name: logs-es-elastic-user
+        key: elastic
+
+  # no kibana: the case asks for the elasticsearch dashboard, and grafana already
+  # is one. two datasources because the two pipelines write two index patterns
+  additionalDataSources:
+    - name: Elasticsearch - app
+      type: elasticsearch
+      uid: es-app
+      url: http://logs-es-http:9200
+      access: proxy
+      basicAuth: true
+      basicAuthUser: elastic
+      secureJsonData:
+        basicAuthPassword: $ES_PASSWORD
+      jsonData:
+        index: "[query-echo-]YYYY.MM.DD"
+        interval: Daily
+        timeField: "@timestamp"
+        logMessageField: message
+        logLevelField: log.level
+    - name: Elasticsearch - cluster
+      type: elasticsearch
+      uid: es-cluster
+      url: http://logs-es-http:9200
+      access: proxy
+      basicAuth: true
+      basicAuthUser: elastic
+      secureJsonData:
+        basicAuthPassword: $ES_PASSWORD
+      jsonData:
+        index: "[k8s-]YYYY.MM.DD"
+        interval: Daily
+        timeField: "@timestamp"
+        logMessageField: log
+
+  sidecar:
+    datasources:
+      # the chart builds this from the service name and drops routePrefix
+      url: http://kps-prometheus:9090/prometheus
+
+  # serve_from_sub_path moves /metrics too, and the default here does not follow
+  serviceMonitor:
+    path: /grafana/metrics
+
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      memory: 256Mi
+
+prometheusOperator:
+  nodeSelector:
+    monitoring: metrics
+
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      memory: 256Mi
+
+kube-state-metrics:
+  nodeSelector:
+    monitoring: metrics
+
+  resources:
+    requests:
+      cpu: 25m
+      memory: 64Mi
+    limits:
+      memory: 128Mi
+
+prometheus-node-exporter:
+  resources:
+    requests:
+      cpu: 25m
+      memory: 32Mi
+    limits:
+      memory: 64Mi
