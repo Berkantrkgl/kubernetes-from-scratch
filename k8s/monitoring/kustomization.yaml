@@ -1,0 +1,9 @@
+# the namespace is created by 06-monitoring.yml, before the Grafana credential that
+# has to exist ahead of the chart, so it is not declared here
+resources:
+  - elasticsearch.yaml
+  - ingress.yaml
+  - app-servicemonitor.yaml
+  - eck-podmonitor.yaml
+  - alert-rules.yaml
+  - dashboard.yaml

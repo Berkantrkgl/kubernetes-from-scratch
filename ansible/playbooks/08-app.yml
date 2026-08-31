@@ -18,7 +18,7 @@
   tasks:
 
     - name: Apply the application manifests
-      ansible.builtin.command: kubectl apply -f /vagrant/k8s/app/
+      ansible.builtin.command: kubectl apply -k /vagrant/k8s/app/
       register: app_apply
       changed_when: "'created' in app_apply.stdout or 'configured' in app_apply.stdout"
       tags: [app]

@@ -16,7 +16,7 @@
   tasks:
 
     - name: Apply the ExternalDNS manifests
-      ansible.builtin.command: kubectl apply -f /vagrant/k8s/externaldns/
+      ansible.builtin.command: kubectl apply -k /vagrant/k8s/externaldns/
       register: externaldns_apply
       changed_when: "'created' in externaldns_apply.stdout or 'configured' in externaldns_apply.stdout"
       tags: [externaldns]

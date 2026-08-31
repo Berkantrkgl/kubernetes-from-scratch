@@ -53,7 +53,7 @@
       tags: [eck]
 
     - name: Apply the Elasticsearch resource
-      ansible.builtin.command: kubectl apply -f /vagrant/k8s/monitoring/05-elasticsearch.yaml
+      ansible.builtin.command: kubectl apply -f /vagrant/k8s/monitoring/elasticsearch.yaml
       register: es_apply
       changed_when: "'created' in es_apply.stdout or 'configured' in es_apply.stdout"
       tags: [elasticsearch]
@@ -207,7 +207,7 @@
     # ingress, the two monitors, the alert rules and the dashboard. the Elasticsearch
     # resource is in here too and apply is idempotent, so it costs nothing
     - name: Apply the monitoring manifests
-      ansible.builtin.command: kubectl apply -f /vagrant/k8s/monitoring/
+      ansible.builtin.command: kubectl apply -k /vagrant/k8s/monitoring/
       register: monitoring_apply
       changed_when: "'created' in monitoring_apply.stdout or 'configured' in monitoring_apply.stdout"
       tags: [manifests]

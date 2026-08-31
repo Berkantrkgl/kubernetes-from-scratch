@@ -1,0 +1,9 @@
+# kustomize orders by kind, so the Namespace goes first without the filenames
+# having to say so. the list is explicit: a file that is not named here is not
+# deployed, which is the property worth having in a directory someone else reads
+resources:
+  - namespace.yaml
+  - fluent-bit-config.yaml
+  - deployment.yaml
+  - service.yaml
+  - ingress.yaml

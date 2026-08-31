@@ -29,7 +29,7 @@ kps_chart_version: "88.5.4"       # kube-prometheus-stack
 eck_chart_version: "3.5.0"
 fluent_bit_chart_version: "0.58.1"
 
-# elasticsearch's own version is in k8s/monitoring/05-elasticsearch.yaml, since that
+# elasticsearch's own version is in k8s/monitoring/elasticsearch.yaml, since that
 # is a manifest rather than a chart flag. one source of truth, not two
 
 # node roles, by label rather than by name so a rename does not break them
