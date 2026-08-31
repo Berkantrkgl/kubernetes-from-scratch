@@ -1,0 +1,55 @@
+controller:
+  # the case pins Jenkins to Node 3, which is node-2 here. by label, not by name
+  nodeSelector:
+    workload: jenkins
+
+  resources:
+    requests:
+      cpu: 500m
+      memory: 1Gi
+    limits:
+      memory: 2Gi
+
+  javaOpts: "-XX:MaxRAMPercentage=70.0"
+
+  serviceType: LoadBalancer
+  servicePort: 80
+  targetPort: 8080
+  serviceAnnotations:
+    metallb.universe.tf/loadBalancerIPs: 10.50.0.201
+    # no "alpha", external-dns 0.22 dropped it from the default prefix
+    external-dns.kubernetes.io/hostname: jenkins.k8s.berkan.link
+
+  # without this Jenkins builds its links from the pod address
+  jenkinsUrl: http://jenkins.k8s.berkan.link
+
+  admin:
+    # createSecret has to stay true or the chart never mounts the secret volume,
+    # but existingSecret stops it creating one of its own
+    createSecret: true
+    existingSecret: jenkins-admin
+
+  additionalPlugins:
+    - job-dsl:3732.v9a_c49a_61a_313
+    - credentials-binding:728.v902a_273b_8947
+
+  JCasC:
+    defaultConfig: true
+    configScripts:
+      # only keys the chart's own config does not set, JCasC errors on duplicates
+      settings: |
+        jenkins:
+          systemMessage: "Kubernetes from scratch. Configured as code, nothing clicked."
+
+persistence:
+  enabled: true
+  storageClass: local-path
+  size: 8Gi
+
+agent:
+  resources:
+    requests:
+      cpu: 200m
+      memory: 512Mi
+    limits:
+      memory: 1Gi
