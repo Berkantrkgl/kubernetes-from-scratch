@@ -1,0 +1,20 @@
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  # the ECK chart can render this itself, but its CRD comes with
+  # kube-prometheus-stack and that is installed later. same reason the application's
+  # ServiceMonitor lives here rather than in k8s/app/
+  name: elastic-operator
+  namespace: monitoring
+spec:
+  namespaceSelector:
+    matchNames: [elastic-system]
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: elastic-operator
+      app.kubernetes.io/instance: elastic-operator
+  podMetricsEndpoints:
+    - port: metrics
+      path: /metrics
+      interval: 5m
+      scrapeTimeout: 30s

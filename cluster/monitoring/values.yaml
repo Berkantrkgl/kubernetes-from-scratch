@@ -82,9 +82,10 @@ alertmanager:
         memory: 256Mi
 
 grafana:
-  # node-1 is the logging node and elasticsearch needs the room there
+  # node-2 carries Jenkins and Prometheus, 2Gi of requests before anything else, so
+  # the small components go where there is room rather than where the label reads
   nodeSelector:
-    monitoring: metrics
+    monitoring: logs
 
   admin:
     existingSecret: grafana-admin
@@ -149,16 +150,18 @@ grafana:
   serviceMonitor:
     path: /grafana/metrics
 
+  # 256Mi was a guess and it was wrong: loading a dashboard against two Elasticsearch
+  # datasources OOMKilled it. the request now says what it actually needs
   resources:
     requests:
       cpu: 50m
-      memory: 128Mi
-    limits:
       memory: 256Mi
+    limits:
+      memory: 512Mi
 
 prometheusOperator:
   nodeSelector:
-    monitoring: metrics
+    monitoring: logs
 
   resources:
     requests:
@@ -169,7 +172,7 @@ prometheusOperator:
 
 kube-state-metrics:
   nodeSelector:
-    monitoring: metrics
+    monitoring: logs
 
   resources:
     requests:

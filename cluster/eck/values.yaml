@@ -11,5 +11,8 @@ config:
   metrics:
     port: "8080"
 
+# the chart can render a PodMonitor, and it must not: PodMonitor's CRD arrives with
+# kube-prometheus-stack, which is installed after this. ours is applied as a manifest
+# in k8s/monitoring/ instead, next to the CRDs it depends on
 podMonitor:
-  enabled: true
+  enabled: false
