@@ -9,7 +9,7 @@ metadata:
 spec:
   ingressClassName: nginx
   rules:
-    - host: app.k8s.local
+    - host: app.k8s.berkan.link
       http:
         paths:
           - path: /
