@@ -11,6 +11,16 @@ pipeline {
         apiVersion: v1
         kind: Pod
         spec:
+          # deliberate exception to the retained control plane taint, and the only one:
+          # this agent runs ansible and ssh, never workload code, and it ssh's to this
+          # node anyway. on a worker its own 384Mi is the headroom the rollout it is
+          # driving needs -- the agent and the deployment deadlock over the same memory
+          nodeSelector:
+            node-role.kubernetes.io/control-plane: ""
+          tolerations:
+            - key: node-role.kubernetes.io/control-plane
+              operator: Exists
+              effect: NoSchedule
           containers:
             - name: ansible
               image: ghcr.io/ansible-community/community-ee-minimal:2.21.3-1
