@@ -14,10 +14,15 @@ pipeline {
             - name: buildkit
               image: moby/buildkit:v0.32.2-rootless
               args: ["--oci-worker-no-process-sandbox"]
+              # rootless buildkit needs BOTH profiles unconfined. seccomp alone gets
+              # you "rootlesskit: failed to share mount point: /: permission denied",
+              # which reads like a privilege problem and is an AppArmor one
               securityContext:
                 runAsUser: 1000
                 runAsGroup: 1000
                 seccompProfile:
+                  type: Unconfined
+                appArmorProfile:
                   type: Unconfined
               readinessProbe:
                 exec:
