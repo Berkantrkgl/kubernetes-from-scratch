@@ -16,9 +16,12 @@ pipeline {
               image: ghcr.io/ansible-community/community-ee-minimal:2.21.3-1
               command: ["sleep"]
               args: ["9999999"]
+              # the image's own uid 1000 has no /etc/passwd entry -- it is built for
+              # OpenShift's arbitrary-uid model -- and the ssh client refuses to run
+              # when getpwuid() fails: "No user exists for uid 1000"
+              securityContext:
+                runAsUser: 0
               env:
-                # the image runs as uid 1000 with no writable default HOME --
-                # verified with `docker run`, not assumed
                 - name: HOME
                   value: /tmp
               resources:
