@@ -88,6 +88,11 @@ rbac:
   readSecrets: true
 
 agent:
+  # chart default is 100s, counted from pod creation to the agent calling home. a
+  # cold pull of the buildkit image does not fit in that, and the plugin cancels the
+  # queue item rather than waiting -- which surfaces as ABORTED, not as a timeout
+  connectTimeout: 300
+
   # this is the jnlp sidecar the plugin injects into every build pod, not the build
   # itself. 512Mi of *request* on a 3.8Gi worker that already holds the platform is
   # what left the first build Pending -- it burst-limits to 512Mi, it just no longer
