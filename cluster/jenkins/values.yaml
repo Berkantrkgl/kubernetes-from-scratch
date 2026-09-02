@@ -76,6 +76,23 @@ controller:
                   }
                 }
               }
+          - script: >
+              pipelineJob('deploy-app') {
+                definition {
+                  cpsScm {
+                    scm {
+                      git {
+                        remote {
+                          url('git@github.com:Berkantrkgl/kubernetes-from-scratch.git')
+                          credentials('github-deploy-key')
+                        }
+                        branch('main')
+                      }
+                    }
+                    scriptPath('ansible/Jenkinsfile')
+                  }
+                }
+              }
 
 persistence:
   enabled: true
