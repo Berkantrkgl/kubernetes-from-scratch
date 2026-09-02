@@ -1,0 +1,69 @@
+// Deployment pipeline -- requirement 2.3. This is a client, not the thing that talks
+// to the API server: 08-app.yml runs over SSH against the control plane and executes
+// kubectl there, using that node's own admin.conf. So this agent needs ansible-core
+// and an SSH client, not a kubeconfig and not any Kubernetes RBAC of its own.
+//
+// Design decisions and the credential shape: docs/mds/deployment-pipeline.md
+pipeline {
+  agent {
+    kubernetes {
+      yaml '''
+        apiVersion: v1
+        kind: Pod
+        spec:
+          containers:
+            - name: ansible
+              image: ghcr.io/ansible-community/community-ee-minimal:2.21.3-1
+              command: ["sleep"]
+              args: ["9999999"]
+              env:
+                # the image runs as uid 1000 with no writable default HOME --
+                # verified with `docker run`, not assumed
+                - name: HOME
+                  value: /tmp
+              resources:
+                requests: { cpu: 200m, memory: 256Mi }
+                limits: { memory: 512Mi }
+      '''
+    }
+  }
+
+  parameters {
+    string(name: 'IMAGE_TAG', defaultValue: '',
+           description: 'Image tag to deploy. Empty deploys whatever k8s/app/deployment.yaml already names in git.')
+  }
+
+  stages {
+    stage('Checkout') {
+      steps { checkout scm }
+    }
+
+    stage('Deploy') {
+      steps {
+        container('ansible') {
+          // same credential shape as Docker Hub's in app/Jenkinsfile -- a labeled
+          // Secret the kubernetes-credentials-provider plugin turns into a Jenkins
+          // credential, written to a temp file with correct permissions and removed
+          // when the step ends
+          withCredentials([sshUserPrivateKey(
+              credentialsId: 'vagrant-ssh',
+              keyFileVariable: 'SSH_KEY_FILE')]) {
+            sh '''
+              cd ansible
+              EXTRA=""
+              if [ -n "$IMAGE_TAG" ]; then EXTRA="-e app_image_tag=$IMAGE_TAG"; fi
+
+              ansible-playbook playbooks/08-app.yml --private-key "$SSH_KEY_FILE" $EXTRA
+            '''
+          }
+        }
+      }
+    }
+  }
+
+  post {
+    success {
+      echo "deployed: ${params.IMAGE_TAG ?: '(image pinned in git)'}"
+    }
+  }
+}

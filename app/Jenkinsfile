@@ -1,0 +1,94 @@
+// Build pipeline -- requirement 2.2. The Kubernetes plugin creates a pod for this
+// build alone and deletes it afterwards, so there is no toolchain sitting idle
+// between builds and nothing here assumes a previous build's state.
+//
+// Design decisions, alternatives and the archived-kaniko finding: docs/mds/build-pipeline.md
+pipeline {
+  agent {
+    kubernetes {
+      yaml '''
+        apiVersion: v1
+        kind: Pod
+        spec:
+          containers:
+            - name: buildkit
+              image: moby/buildkit:v0.32.2-rootless
+              args: ["--oci-worker-no-process-sandbox"]
+              securityContext:
+                runAsUser: 1000
+                runAsGroup: 1000
+                seccompProfile:
+                  type: Unconfined
+              readinessProbe:
+                exec:
+                  command: ["buildctl", "debug", "workers"]
+                initialDelaySeconds: 5
+                periodSeconds: 5
+              resources:
+                requests: { cpu: 500m, memory: 512Mi }
+                limits: { memory: 1Gi }
+              volumeMounts:
+                - name: buildkitd
+                  mountPath: /home/user/.local/share/buildkit
+          volumes:
+            - name: buildkitd
+              emptyDir: {}
+      '''
+    }
+  }
+
+  environment {
+    IMAGE = 'berkantrkgl/query-echo'
+    // rootless buildkitd listens on this socket as uid 1000 -- default discovery
+    // depends on XDG_RUNTIME_DIR being set the same way the daemon saw it, so the
+    // path is given explicitly rather than assumed
+    BUILDCTL = 'buildctl --addr unix:///run/user/1000/buildkit/buildkitd.sock'
+  }
+
+  stages {
+    stage('Checkout') {
+      steps {
+        checkout scm
+        // env{} at the pipeline level evaluates before any stage runs, so a value
+        // that depends on checkout has to be set here, after it, not up there
+        script {
+          env.TAG = env.GIT_COMMIT.take(7)
+        }
+      }
+    }
+
+    stage('Build and push') {
+      steps {
+        container('buildkit') {
+          withCredentials([usernamePassword(
+              credentialsId: 'dockerhub',
+              usernameVariable: 'REG_USER',
+              passwordVariable: 'REG_PASS')]) {
+            sh '''
+              mkdir -p ~/.docker
+              AUTH=$(printf '%s:%s' "$REG_USER" "$REG_PASS" | base64 -w0)
+              printf '{"auths":{"https://index.docker.io/v1/":{"auth":"%s"}}}' "$AUTH" > ~/.docker/config.json
+
+              $BUILDCTL build \
+                --frontend dockerfile.v0 \
+                --local context=$WORKSPACE/app \
+                --local dockerfile=$WORKSPACE/app \
+                --output type=image,\\"name=$IMAGE:$TAG,$IMAGE:latest\\",push=true \
+                --export-cache type=inline \
+                --import-cache type=registry,ref=$IMAGE:latest
+            '''
+          }
+        }
+      }
+    }
+  }
+
+  post {
+    always {
+      container('buildkit') { sh 'rm -f ~/.docker/config.json' }
+    }
+    success {
+      echo "pushed ${env.IMAGE}:${env.TAG}"
+    }
+  }
+}

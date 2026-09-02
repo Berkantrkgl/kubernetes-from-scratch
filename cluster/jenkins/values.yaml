@@ -32,6 +32,9 @@ controller:
   additionalPlugins:
     - job-dsl:3732.v9a_c49a_61a_313
     - credentials-binding:728.v902a_273b_8947
+    # auto-discovers labeled Secrets in this namespace as Jenkins credentials, so
+    # the Docker Hub login never touches values.yaml or JCasC
+    - kubernetes-credentials-provider:1.315.v92008589c044
 
   JCasC:
     defaultConfig: true
@@ -41,10 +44,48 @@ controller:
         jenkins:
           systemMessage: "Kubernetes from scratch. Configured as code, nothing clicked."
 
+      # github.com's own published ed25519 host key, not "accept first connection" --
+      # the repo is private, so this SSH connection is worth verifying rather than
+      # trusting on first use. docs/mds/build-pipeline.md
+      git-security: |
+        security:
+          gitHostKeyVerificationConfiguration:
+            sshHostKeyVerificationStrategy:
+              manuallyProvidedKeyVerificationStrategy:
+                approvedHostKeys: |-
+                  github.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl
+
+      # the job definition itself -- requirement 2.2's "nothing clicked" carried to
+      # its logical end. job-dsl renders this once at Jenkins startup
+      jobs: |
+        jobs:
+          - script: >
+              pipelineJob('build-and-push') {
+                definition {
+                  cpsScm {
+                    scm {
+                      git {
+                        remote {
+                          url('git@github.com:Berkantrkgl/kubernetes-from-scratch.git')
+                          credentials('github-deploy-key')
+                        }
+                        branch('main')
+                      }
+                    }
+                    scriptPath('app/Jenkinsfile')
+                  }
+                }
+              }
+
 persistence:
   enabled: true
   storageClass: local-path
   size: 8Gi
+
+rbac:
+  # chart default omits secrets entirely -- kubernetes-credentials-provider needs
+  # get/watch/list to discover credentials, nothing else reads this permission
+  readSecrets: true
 
 agent:
   resources:
