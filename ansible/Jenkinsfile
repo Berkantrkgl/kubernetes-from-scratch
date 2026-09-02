@@ -24,13 +24,12 @@ pipeline {
               env:
                 - name: HOME
                   value: /tmp
-                # ansible.cfg asks for the yaml callback and profile_tasks, both of
-                # which ship in collections this image does not carry -- and a missing
-                # stdout callback is fatal, not cosmetic. the host keeps them
+                # ansible.cfg asks for the yaml callback, which ships in a collection
+                # this image does not carry. a missing *stdout* callback is fatal; the
+                # missing profile_tasks next to it is skipped silently, so only this
+                # one needs overriding and ansible.cfg stays as the host wants it
                 - name: ANSIBLE_STDOUT_CALLBACK
                   value: default
-                - name: ANSIBLE_CALLBACKS_ENABLED
-                  value: ""
               resources:
                 requests: { cpu: 200m, memory: 256Mi }
                 limits: { memory: 512Mi }
