@@ -88,9 +88,13 @@ rbac:
   readSecrets: true
 
 agent:
+  # this is the jnlp sidecar the plugin injects into every build pod, not the build
+  # itself. 512Mi of *request* on a 3.8Gi worker that already holds the platform is
+  # what left the first build Pending -- it burst-limits to 512Mi, it just no longer
+  # reserves it
   resources:
     requests:
-      cpu: 200m
-      memory: 512Mi
+      cpu: 100m
+      memory: 128Mi
     limits:
-      memory: 1Gi
+      memory: 512Mi

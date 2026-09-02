@@ -24,8 +24,10 @@ pipeline {
                   command: ["buildctl", "debug", "workers"]
                 initialDelaySeconds: 5
                 periodSeconds: 5
+              # request is what the scheduler reserves, and both workers already carry
+              # the platform -- keep it small, let the build burst to the limit
               resources:
-                requests: { cpu: 500m, memory: 512Mi }
+                requests: { cpu: 300m, memory: 256Mi }
                 limits: { memory: 1Gi }
               volumeMounts:
                 - name: buildkitd
