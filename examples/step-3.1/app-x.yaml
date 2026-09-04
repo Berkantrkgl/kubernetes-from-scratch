@@ -1,0 +1,104 @@
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: app-x
+  labels:
+    app.kubernetes.io/name: app-x
+spec:
+  replicas: 2
+
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: app-x
+
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: app-x
+
+    spec:
+      priorityClassName: realtime-critical
+
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: DoNotSchedule
+          nodeTaintsPolicy: Honor
+          matchLabelKeys:
+            - pod-template-hash
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: app-x
+
+      containers:
+        - name: app-x
+          image: berkantrkgl/query-echo:0.2.1
+
+          ports:
+            - name: http
+              containerPort: 9001
+
+          # requests == limits on both resources makes this Guaranteed: last in line
+          # under node pressure, and the cpu is reserved rather than shared. the cost
+          # is no bursting - accepted here, predictability is what real-time asks for
+          resources:
+            requests:
+              cpu: 500m
+              memory: 512Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+
+          readinessProbe:
+            httpGet:
+              path: /actuator/health/readiness
+              port: http
+            periodSeconds: 5
+
+          livenessProbe:
+            httpGet:
+              path: /actuator/health/liveness
+              port: http
+            periodSeconds: 10
+
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: app-x
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: app-x
+
+  minReplicas: 2
+  maxReplicas: 6
+
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
+
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 0
+    scaleDown:
+      # give capacity back slowly, a dip in load is not a reason to shrink
+      stabilizationWindowSeconds: 300
+
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: app-x
+spec:
+  # covers drains and node upgrades. preemption ignores this on purpose
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: app-x

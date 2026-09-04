@@ -1,0 +1,41 @@
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: app-y
+  labels:
+    app.kubernetes.io/name: app-y
+spec:
+  replicas: 4
+
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: app-y
+
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: app-y
+
+    spec:
+      priorityClassName: batch-preemptible
+
+      # this workload is the one that gets taken away, so let it go quickly
+      terminationGracePeriodSeconds: 30
+
+      containers:
+        - name: app-y
+          image: berkantrkgl/query-echo:0.2.1
+
+          ports:
+            - name: http
+              containerPort: 9001
+
+          # Burstable: the request is what it needs to run, the missing cpu limit lets
+          # it use whatever App X is not using at the moment
+          resources:
+            requests:
+              cpu: 250m
+              memory: 256Mi
+            limits:
+              memory: 1Gi

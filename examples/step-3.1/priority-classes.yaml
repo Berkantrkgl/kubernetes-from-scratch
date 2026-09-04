@@ -1,0 +1,19 @@
+---
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: realtime-critical
+value: 1000000
+globalDefault: false
+description: "App X. May evict batch workloads to get scheduled."
+
+---
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: batch-preemptible
+value: 100
+globalDefault: false
+# can be evicted, never evicts anyone else
+preemptionPolicy: Never
+description: "App Y. Batch work that can be killed or paused."
