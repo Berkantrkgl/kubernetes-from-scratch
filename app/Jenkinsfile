@@ -96,6 +96,11 @@ pipeline {
     }
     success {
       echo "pushed ${env.IMAGE}:${env.TAG}"
+      // 2.3 starts where 2.2 ends. wait: false so the build agent is not held open for
+      // the length of a rollout -- the two jobs report separately
+      build job: 'deploy-app',
+            parameters: [string(name: 'IMAGE_TAG', value: env.TAG)],
+            wait: false
     }
   }
 }
