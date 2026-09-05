@@ -3,6 +3,7 @@
 *.log
 
 # Cluster credentials and generated material
+route53.yml
 kubeconfig
 *.kubeconfig
 admin.conf

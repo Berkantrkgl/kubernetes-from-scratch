@@ -52,9 +52,19 @@ ansible-playbook site.yml -e @../route53.yml    # everything else
 seconds, `failed=0`.** A second run reports `changed=0` on all three hosts, which is the
 check that the playbooks describe a state rather than repeat actions.
 
-The Route53 credential is the only thing that cannot be generated on a node. The encryption
-key, the Grafana and Jenkins passwords and the webhook's TLS certificate are all generated
-on the control plane and never enter this repository.
+**The Route53 credential is the only thing that cannot be generated on a node**, because it
+belongs to an AWS account. Create `route53.yml` in the repository root before the first run
+— it is gitignored, and `-e @file` rather than `-e key=value` keeps the value out of `argv`
+where `ps` could read it:
+
+```yaml
+route53_access_key_id: AKIA...
+route53_secret_access_key: ...
+```
+
+Everything else — the encryption key, the Grafana and Jenkins admin passwords, the webhook's
+TLS certificate — is generated on the control plane during the run and never enters this
+repository.
 
 ---
 
