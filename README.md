@@ -11,6 +11,7 @@ command.
 | **Written answers** to the case's prose questions | [ANSWERS.md](ANSWERS.md) |
 | **Design decisions**, alternatives and limitations | [DESIGN.md](DESIGN.md) |
 
+
 ---
 
 ## Environment
@@ -66,6 +67,49 @@ Everything else — the encryption key, the Grafana and Jenkins admin passwords,
 TLS certificate — is generated on the control plane during the run and never enters this
 repository.
 
+### Running it without a Route53 zone
+
+ExternalDNS is the only part that reaches outside this machine. Without a hosted zone, skip
+it and resolve the names locally — nothing else changes, because the ingress rules match on
+the `Host` header and do not care who answered the DNS query:
+
+```bash
+ansible-playbook site.yml --skip-tags externaldns
+```
+
+```
+# /etc/hosts on the host machine
+10.50.0.200  app.k8s.berkan.link monitor.k8s.berkan.link
+10.50.0.201  jenkins.k8s.berkan.link
+```
+
+With a zone of your own, set `dns_zone` in `ansible/group_vars/all.yml` and the `host:`
+fields in `k8s/app/ingress.yaml` and `k8s/monitoring/ingress.yaml` — the manifests are
+applied by Kustomize, which does not template, so those two names are literal.
+
+### Credentials the pipelines need
+
+The cluster comes up without these, but the two Jenkins jobs will not run. None of them can
+be generated on a node, so all three are applied by hand — listed as a gap in
+[DESIGN.md](DESIGN.md#known-limitations) rather than left to be discovered.
+
+| Secret | For | Contents |
+|---|---|---|
+| `dockerhub` | pushing the image | Docker Hub user + access token |
+| `github-deploy-key` | cloning this repository | private half of a read-only deploy key |
+| `vagrant-ssh` | reaching the control plane | `~/.vagrant.d/insecure_private_keys/vagrant.key.rsa` |
+
+Each is a plain Secret in the `jenkins` namespace carrying a
+`jenkins.io/credentials-type` label — `usernamePassword` for the first,
+`basicSSHUserPrivateKey` for the other two. The kubernetes-credentials-provider plugin
+watches for that label and turns them into Jenkins credentials, so nothing is clicked.
+
+Apply them by piping a manifest into `kubectl apply -f -` rather than with
+`--from-literal`, which puts the value in `argv` where `ps` and shell history keep it.
+
+The JCasC job definitions also point at this repository, so a copy needs its own remote and
+its own deploy key — see `cluster/jenkins/values.yaml`.
+
 ---
 
 ## The pipelines
@@ -104,19 +148,19 @@ examples/step-3.1/   sample manifests for the written answer to 3.1
 | | Requirement | Implementation | Answer |
 |---|---|---|---|
 | 1.1 | Java app printing query parameters | `app/` | |
-| 1.2 | Multi-stage Dockerfile, small image, security | `app/Dockerfile` | [build acceleration](ANSWERS.md#12a--strategies-for-accelerating-the-application-build) |
+| 1.2 | Multi-stage Dockerfile, small image, security | `app/Dockerfile` | [build acceleration](ANSWERS.md#12a--speeding-up-the-application-build) |
 | 1.3 | Production-ready cluster, custom subnets | `cluster/kubeadm-config.yaml` | |
-| 1.3.c | GitOps | not installed | [why](ANSWERS.md#13c--gitops-and-why-it-is-not-installed) |
+| 1.3.c | GitOps | not installed | [why](ANSWERS.md#13c--gitops) |
 | 1.4 | ExternalDNS | `k8s/externaldns/` | |
 | 1.5 | Jenkins on Node 3, JCasC, persistent, LoadBalancer | `cluster/jenkins/values.yaml` | |
 | 1.6 | Prometheus · Elasticsearch · Grafana · fluent-bit · AlertManager | `cluster/monitoring/`, `k8s/monitoring/` | |
-| 1.7 | Async file logging, 1 GB cap, daily rotation | `app/…/logback-spring.xml` | [design](ANSWERS.md#17--logging-design-asynchronous-capped-at-1-gb-rotated-daily) |
+| 1.7 | Async file logging, 1 GB cap, daily rotation | `app/…/logback-spring.xml` | [design](ANSWERS.md#17--logging-async-1-gb-cap-daily-rotation) |
 | 2.1 | 4 pods across both workers, load balanced by NGINX | `k8s/app/` | |
 | 2.2 | Build pipeline | `app/Jenkinsfile` | |
-| 2.3 | Deployment pipeline using Ansible | `ansible/Jenkinsfile`, `playbooks/08-app.yml` | [zero downtime](ANSWERS.md#23c--achieving-zero-downtime-deployments) |
+| 2.3 | Deployment pipeline using Ansible | `ansible/Jenkinsfile`, `playbooks/08-app.yml` | [zero downtime](ANSWERS.md#23c--zero-downtime-deployments) |
 | 2.4 | Validating admission webhook | `webhook/`, `k8s/webhook/` | |
-| 3.1 | Resource contention between two applications | `examples/step-3.1/` | [answer](ANSWERS.md#31--app-x-must-scale-under-load-on-a-cluster-that-cannot-add-nodes) |
-| 3.2 | Strategy and traffic shift for a critical application | — | [answer](ANSWERS.md#32--deploying-a-critical-application-and-shifting-traffic) |
+| 3.1 | Resource contention between two applications | `examples/step-3.1/` | [answer](ANSWERS.md#31--app-x-has-to-scale-and-no-nodes-can-be-added) |
+| 3.2 | Strategy and traffic shift for a critical application | — | [answer](ANSWERS.md#32--deploying-a-critical-application) |
 
 Known limitations, each with what production would do instead, are at the end of
 [DESIGN.md](DESIGN.md#known-limitations).

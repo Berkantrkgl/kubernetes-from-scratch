@@ -1,271 +1,308 @@
 # Design decisions
 
-The non-obvious choices, the alternatives considered, and what each one costs.
+The choices that were not obvious, and what each one cost.
 
-Version rule applied throughout: **one release back, at rest.** A `.0` is where the
-ecosystem has not caught up; a patch published the same day is a line still being corrected.
+One rule runs through all the version picks: one release back, at rest. A `.0` is where the
+ecosystem has not caught up yet, and a patch published the same day is a line still being
+corrected.
 
 ---
 
-## Environment and bootstrap
+## Environment
 
-| Decision | Alternatives | Why |
-|---|---|---|
-| VirtualBox | libvirt/KVM | KVM is faster, but the case names VirtualBox as a prerequisite |
-| `bento/ubuntu-24.04` | `ubuntu/focal64` (supplied) | 20.04 left support in May 2025, and Canonical's boxes ship without Guest Additions — the `/vagrant` mount would not work |
-| Memory 2.5 / 4.5 / 4.5 GiB | supplied 4 / 2 / 2 | Reversed: the control plane runs ~1.2 GiB of components, each worker carries Jenkins or Elasticsearch plus the app |
-| kubeadm + config file | flags, Kubespray | Kubespray hides the bootstrap, which is the thing being demonstrated. Several settings have no flag equivalent |
-| Kubernetes 1.36.4 | 1.37.0, 1.28 | One minor back at a mature patch; 1.28 is a floor, not a choice |
+The case names Vagrant and VirtualBox, so that is what I used — KVM would be faster on a
+Linux host but matching the reviewer's environment is worth more than the overhead.
 
-**Three defects were fixed in the supplied Vagrantfile**, one dangerous: `MASTER_MEMORY`
-read `ENV["MASTER_CPUS"]`, so `MASTER_CPUS=2` would boot the control plane with 2 MB of RAM.
+I moved off the supplied `ubuntu/focal64` box. It is Ubuntu 20.04, out of standard support
+since May 2025, and Canonical's boxes ship without Guest Additions — so `/vagrant` never
+mounts, and that folder is how the cluster config reaches the nodes.
 
-**The control plane taint is retained.** Untainting would add 2.5 GiB of schedulable
-capacity, but a control plane running workloads is not production-ready — a workload that
-exhausts memory there takes the API server with it. One deliberate exception: the deployment
-pipeline's Ansible agent, which runs only `ansible` and `ssh` and needs to be off the workers
-whose memory the rollout it drives depends on.
+Memory is reversed from the supplied defaults, which give the control plane 4 GiB and each
+worker 2. The control plane runs about 1.2 GiB of components; each worker carries Jenkins or
+Elasticsearch plus Prometheus, an ingress controller and application pods. So 2.5 / 4.5 /
+4.5, with Elasticsearch and Prometheus deliberately on different workers — they are the two
+biggest consumers and would starve a single 4.5 GiB node.
 
-**Secrets encrypted at rest with `secretbox`** — chosen from upstream's guidance, where the
-obvious answers lose: `aescbc` is vulnerable to padding oracles, `aesgcm` needs automated key
-rotation, KMS needs an external key manager. Provider **order** matters more than the
-provider: `identity` sits second so pre-existing Secrets stay readable. First would mean
-everything continues to be written in plaintext, silently.
+The supplied Vagrantfile also has a bug worth mentioning: `MASTER_MEMORY` reads
+`ENV["MASTER_CPUS"]`, so setting `MASTER_CPUS=2` boots the control plane with 2 MB of RAM.
+Invisible while you use the defaults.
 
-*Trade-off:* the key is on the control plane node — protects a stolen snapshot, not an
-attacker who already has root there.
+---
+
+## Bootstrap
+
+kubeadm with a config file rather than flags. Kubespray was the other option the case allows,
+and it hides exactly the layer this exercise is about. Within kubeadm, several settings have
+no flag at all — kubelet eviction thresholds, etcd timers, certificate SANs, the kube-proxy
+mode.
+
+Kubernetes 1.36.4: one minor behind stable, mature patch. 1.28 would satisfy the requirement
+but reads as a floor rather than a choice.
+
+**The control plane keeps its taint.** Untainting would free 2.5 GiB of schedulable memory,
+which is tempting on a host this size, but a control plane running workloads is not
+production-ready — a workload that exhausts memory there takes the API server with it. There
+is one exception: the deployment pipeline's Ansible agent tolerates the taint, because it
+runs only `ansible` and `ssh`, and on a worker its 384 MB is the exact headroom the rollout
+it is driving needs.
+
+Secrets are encrypted at rest with `secretbox`. I picked it from upstream's own guidance,
+where the obvious answers lose: `aescbc` is vulnerable to padding oracles, `aesgcm` needs
+automated key rotation because of its nonce space, and KMS needs a key manager this cluster
+does not have.
+
+The provider order matters more than the provider. `identity` sits second so Secrets written
+before encryption was on stay readable. Putting it first would be the silent version of this
+mistake — everything keeps being written in plaintext and nothing complains.
+
+The honest limit: the key is on the control plane node. It protects a stolen etcd snapshot or
+a cloned disk, not someone who already has root there.
 
 ---
 
 ## Networking
 
-**Calico**, because Flannel does not implement NetworkPolicy and applying one **succeeds
-silently** — the object is stored and nothing happens. Cilium is stronger and costs ~2.5×
-the per-node memory.
+**Calico**, because Flannel does not implement NetworkPolicy — and applying one to a Flannel
+cluster *succeeds*. The object is stored and nothing happens. Cilium is genuinely stronger,
+and costs about 2.5× the per-node memory.
 
-**VXLAN `CrossSubnet`, BGP disabled.** All three nodes share one L2 segment, so
-encapsulation is skipped for same-subnet traffic — BGP-like performance **without BGP
-peering**, which would need a router this environment does not have.
+VXLAN in CrossSubnet mode with BGP off. All three nodes share one L2 segment, so
+encapsulation is skipped for same-subnet traffic and only used across a boundary — close to
+BGP performance without a router to peer with.
 
-**CIDRs chosen by elimination:** `192.168/16` is Calico's default *and* VirtualBox's
-host-only range, `172.17/16` is `docker0`, `10.244/16` is Flannel's. Left with pod
-`10.32.0.0/16`, Service `10.96.0.0/16`. The `/16` for Services rather than kubeadm's `/12` is
-**address-plan hygiene, not performance** — kube-proxy writes rules per Service, not per
-address.
+The CIDRs were chosen by elimination, not preference: `192.168/16` is Calico's own default
+*and* where VirtualBox puts host-only networks, `172.17/16` is `docker0`, `10.244/16` is
+Flannel's. That leaves pod `10.32.0.0/16` and Service `10.96.0.0/16`. The `/16` for Services
+instead of kubeadm's `/12` is about address-plan hygiene rather than performance — kube-proxy
+writes rules per Service, not per address, so the size changes nothing in iptables.
 
-**The multi-interface trap, which repeats three times.** Every VM has the identical NAT
-address `10.0.2.15` on `eth0`; real traffic uses `eth1`. kubelet, the API server and Calico
-each pick a node address independently and all three default to the interface behind the
-default route. Two of the three fail **silently** — the cluster reports `Ready` while
-`kubectl logs` is broken, or pods talk within a node but not across nodes. Calico is pinned
-by CIDR rather than interface name, so a rename does not break it.
+The trap in this environment repeats three times. Every VM has the same NAT address
+`10.0.2.15` on `eth0` while real traffic uses `eth1`, and kubelet, the API server and Calico
+each pick a node address independently — all three defaulting to the interface behind the
+default route. Two of the three fail quietly: the cluster reports `Ready` while `kubectl
+logs` is broken, or pods talk within a node but not across nodes. Calico is pinned by CIDR
+rather than interface name so a rename does not break it.
 
-**MetalLB, L2 mode.** `type: LoadBalancer` does nothing on bare metal — the Service is stored
-and waits for a cloud controller that does not exist. BGP mode needs a peering router.
-*Consequences:* the pool must be in the node subnet (ARP does not leave the broadcast
-domain), and all traffic for an address enters through one elected node.
+MetalLB runs in L2 mode because there is no BGP-capable router here. Worth knowing what that
+costs: the address pool has to sit in the node subnet, since ARP does not leave the broadcast
+domain, and all traffic for one address enters through a single elected node.
 
 ---
 
-## Ingress — the choice the ecosystem forced
+## Ingress
 
-**`kubernetes/ingress-nginx` is retired.** Final release 19 March 2026; its supported-Kubernetes
-table stops at 1.35 while this cluster runs 1.36.4; the Kubernetes Security Response Committee
-wrote that staying on it "leaves you and your users vulnerable to attack." It still installs
-cleanly and nothing warns you — that is the trap.
+This is the decision with the most research behind it, because the default answer stopped
+being available. **`kubernetes/ingress-nginx` is retired** — final release 19 March 2026, its
+supported-Kubernetes table stops at 1.35 while this cluster runs 1.36.4, and the Kubernetes
+Security Response Committee wrote that staying on it leaves users vulnerable. The artifacts
+still install cleanly and nothing warns you, which is the trap.
 
-| Alternative | Rejected because |
+What I looked at:
+
+| | |
 |---|---|
-| `kubernetes/ingress-nginx` | unmaintained, untested on 1.36, no further security fixes |
-| InGate (announced successor) | archived March 2026 **without ever cutting a release** |
-| NGINX Gateway Fabric | does not process `Ingress` at all — the case says "using an Ingress" |
-| Traefik, HAProxy | no technical objection; the case says "load-balanced using **Nginx**" |
+| `kubernetes/ingress-nginx` | unmaintained, untested on 1.36, no more security fixes |
+| InGate, the announced successor | archived March 2026 without ever cutting a release |
+| NGINX Gateway Fabric | Gateway API only — it does not process `Ingress`, and the case says Ingress |
+| Traefik, HAProxy | nothing wrong with either; the case says load-balanced using **Nginx** |
 
-**Chosen: F5/NGINX `nginx/kubernetes-ingress` OSS v5.5.4** — a different project from the
-community one despite the name, tested on 1.29–1.36, monthly releases. It is NGINX, it
-implements the Ingress API, and it is maintained.
+I went with F5's `nginx/kubernetes-ingress` OSS v5.5.4 — a different project from the
+community one despite the near-identical name, written by the NGINX team, tested on 1.29 to
+1.36, monthly releases.
 
-*Cost:* the annotation prefix is `nginx.org/`, so an annotation copied from an ingress-nginx
-example is **silently ignored**. This shaped a later decision — each backend serves its own
-subpath rather than relying on the controller's rewrite dialect.
+It costs one thing: the annotation prefix is `nginx.org/`, so anything copied from an
+ingress-nginx example is silently ignored. That pushed a later decision too — each backend
+serves its own subpath (`--web.route-prefix`, `serve_from_sub_path`) instead of relying on
+the controller's rewrite dialect.
 
-**`externalTrafficPolicy: Cluster`**, overriding the chart's `Local`, because of MetalLB
-issue #2747: with `Local` and two replicas on different nodes, multiple speakers answer ARP
-for the same VIP with different MACs and connectivity becomes intermittent about half an hour
-in. The cost is the client IP, and `X-Forwarded-For` does not rescue it — SNAT happens before
-NGINX. In production the answer is BGP mode, where `Local` costs nothing.
+I also overrode the chart's `externalTrafficPolicy: Local`. Not because client IP does not
+matter, but because of MetalLB issue #2747: with `Local` and two replicas on different nodes,
+several speakers answer ARP for the same VIP with different MACs and connectivity goes
+intermittent about half an hour in. `X-Forwarded-For` does not rescue the client IP either —
+SNAT happens before NGINX, so NGINX already sees the node address. In production the answer
+is MetalLB in BGP mode, where `Local` costs nothing.
 
 ---
 
 ## Platform
 
-**local-path-provisioner.** kubeadm installs no provisioner, so every PVC would sit `Pending`.
-Longhorn and Rook/Ceph are the real bare-metal answers and want spare disks plus ~1 GiB per
-node. `WaitForFirstConsumer` is what makes node-local storage acceptable — the volume is
-created after the pod is scheduled. *Limitation:* no replication; losing `node-2` loses
-Jenkins' home.
+kubeadm installs no storage provisioner at all, so every PVC would sit `Pending` — and
+Jenkins, Prometheus, Grafana and Elasticsearch all need one. Longhorn and Rook/Ceph are the
+real bare-metal answers and both want spare disks and roughly a gigabyte per node.
+local-path-provisioner is a single 30 MB Deployment, and `WaitForFirstConsumer` is what makes
+node-local storage acceptable: the volume is created after the pod is scheduled. No
+replication though — losing `node-2` loses Jenkins' home.
 
-**Helm 4, not 3.** ArgoCD bundles Helm 4, so installing 3 would mean testing a render with one
-engine and shipping with another. Helm 4 defaults to **server-side apply**, which surfaced a
-real ownership conflict over Calico's IP pool on the first upgrade — Helm 3 would have
-silently overwritten the operator's fields instead.
+Helm 4 rather than 3, because ArgoCD bundles Helm 4 and I did not want to render charts with
+one engine and ship them with another. Helm 4 defaults to server-side apply, which surfaced a
+real ownership conflict over Calico's IP pool on the first upgrade. Helm 3 would have
+silently overwritten the operator's fields instead, so the newer major turning it into a
+visible error is an argument in its favour.
 
-**ExternalDNS against Route53**, not a local provider — a **verifiability** decision. With
-local CoreDNS the claim "records are created automatically" is only demonstrable on the
-machine that built the cluster; with Route53 the reviewer runs `dig`. The IAM policy is scoped
-to **one zone ARN**, and both directions were tested: a write to the delegated zone succeeds,
-a write to the parent returns `AccessDenied`. *Trade-off:* public records resolve to RFC1918
-addresses, and static AWS keys exist where EKS would use IRSA.
+ExternalDNS points at Route53 instead of a local provider, and that is a verifiability
+decision rather than a technical one. With local CoreDNS, "records are created automatically"
+is only demonstrable on the machine that built the cluster — a reviewer gets a screenshot.
+With Route53 they run `dig`. The IAM policy is scoped to one zone ARN rather than the
+documented `hostedzone/*`, and I tested both directions: a write to the delegated zone
+succeeds, a write to the parent gets `AccessDenied`.
 
-**Jenkins from the official chart**, because it is a StatefulSet, a PVC, two Services, agent
-RBAC, a plugin init container, a config-reload sidecar and a JCasC ConfigMap wired together —
-reproducing that by hand is transcription. Placement is by **label**, not hostname, so the
-constraint survives a rename.
+The cost is real — a public zone now resolves to RFC1918 addresses, and static AWS keys exist
+where EKS would give me IRSA.
+
+Jenkins comes from the official chart. ExternalDNS is five static objects so I wrote those by
+hand; Jenkins is a StatefulSet, a PVC, two Services, agent RBAC, a plugin init container, a
+config-reload sidecar and a JCasC ConfigMap wired together. Reproducing that by hand is
+transcription, not engineering. It is pinned to `node-2` by label rather than hostname, so
+the constraint survives a rename.
 
 ---
 
-## Application and image
+## The application and its image
 
-**Written rather than adopting the sample.** The linked sample is Spring Boot 2.6.1 from
-December 2021 — out of support since 2022, with published CVEs in its transitive set, which
-collides directly with the requirement to apply security best practices. Four things have to
-be built regardless (Dockerfile, probes, async file logging, metrics), so adopting it saves
-one controller class. The endpoint contract is preserved deliberately.
+I wrote the application instead of adopting the linked sample. The sample is Spring Boot
+2.6.1 from December 2021 — out of support since 2022, with published CVEs in its transitive
+set, which sits badly next to a requirement about security best practices. Four things have
+to be built either way: a Dockerfile, Actuator probes, async file logging and Micrometer
+metrics. Adopting it saves one controller class. I kept its endpoint contract.
 
-**Distroless base.**
+For the base image:
 
-| Base | Size | |
+| | | |
 |---|---|---|
-| `eclipse-temurin:21-jre` | 303 MiB | 120 MiB never called |
-| `…-jre-alpine` | 198 MiB | musl, still carries busybox and apk |
-| **`distroless/java21-debian12`** | **183 MiB** | chosen |
-| `jlink` runtime | ~110 MiB | rejected on risk |
+| `eclipse-temurin:21-jre` | 303 MiB | 120 MiB of shell and tools never called |
+| the alpine variant | 198 MiB | musl, still carries busybox and apk |
+| **distroless java21** | **183 MiB** | what I used |
+| a `jlink` runtime | ~110 MiB | rejected on risk |
 
-`jlink` would be smallest, but the module set must be enumerated and `jdeps` cannot see
-modules reached by reflection — and Spring reflects heavily. A missing module fails at
-runtime, days later.
+`jlink` would have been much smaller, but the module set has to be enumerated and `jdeps`
+cannot see modules reached by reflection — and Spring reflects heavily. A missing module does
+not fail the build, it fails on whichever code path first needs it, possibly days later.
 
-*Cost, stated plainly:* no shell, so `kubectl exec` gets nothing; logs go to a file, so
-`kubectl logs` is empty too. Two of the three reflexes for inspecting a pod are gone.
-Survivable because the fluent-bit sidecar shares the log volume and the logs land in
-Elasticsearch.
-
-**Layered jar** ordered by change frequency, so a code change rebuilds and pushes **11.1 kB**
-instead of a 24 MB fat jar.
+Distroless costs something worth stating: no shell, so `kubectl exec` gets nothing, and since
+logs go to a file rather than stdout, `kubectl logs` is empty too. Two of the three reflexes
+for looking at a running pod are gone. It works out because the fluent-bit sidecar shares the
+log volume and has a shell, and the logs are in Elasticsearch anyway.
 
 ---
 
 ## Observability
 
-The requirement names five components as if they were one system. They are **two pipelines
-that meet only in Grafana** — Prometheus holds numeric series and is not a log store, which is
-why Elasticsearch is in the list at all.
+The requirement names five components as if they were one system. They are two pipelines that
+only meet in Grafana — Prometheus holds numeric series and is not a log store, which is why
+Elasticsearch is in the list at all.
 
-**kube-prometheus-stack**, because what it installs is the **Prometheus Operator** — there is
-no `prometheus.yml` here. A scrape target is a `ServiceMonitor`; the operator regenerates the
-config and reloads it without restarting anything.
+kube-prometheus-stack, mainly because what it installs is the Prometheus Operator. There is
+no `prometheus.yml` in this repository; a scrape target is a `ServiceMonitor` and the operator
+regenerates the config and reloads it without restarting anything.
 
-Three chart defaults are load-bearing overrides: `storageSpec: {}` means `emptyDir` (the first
-restart deletes every sample), the `*SelectorNilUsesHelmValues` flags would make Prometheus
-ignore any hand-written `ServiceMonitor` **with no error**, and the chart ships **no resource
-requests**, which would fail this cluster's own admission webhook.
+Three of its defaults had to go. `storageSpec: {}` means `emptyDir`, so it installs, looks
+healthy, and the first restart deletes every sample. The `*SelectorNilUsesHelmValues` flags
+make Prometheus read only objects carrying the chart's own labels — a hand-written
+`ServiceMonitor` is stored and never read, with no error anywhere. And the chart ships no
+resource requests at all, which puts everything in BestEffort and would fail this cluster's
+own admission webhook.
 
-**The control plane was invisible until fixed.** Seven targets were down after install, four
-because kubeadm binds controller-manager, scheduler, kube-proxy and etcd metrics to loopback.
-Disabling those ServiceMonitors was the alternative and was rejected — **a green dashboard
-produced by not looking is worse than a red one.**
+Seven scrape targets were down right after the install, four of them because kubeadm binds
+controller-manager, scheduler, kube-proxy and etcd metrics to loopback and Prometheus runs on
+a worker. Disabling those ServiceMonitors was the easy fix and I rejected it — the
+requirement says monitor the cluster, and a green dashboard produced by not looking is worse
+than a red one.
 
-**ECK, not the Helm chart.** The classic chart is frozen at 8.5.1 (2022), but unlike
-ingress-nginx it was **replaced rather than abandoned**: cluster formation, certificate
-rotation and shard-aware rolling restarts cannot be templated. Helm renders and exits; it
-cannot restart a StatefulSet one pod at a time while watching shard allocation.
+For Elasticsearch I used ECK rather than the Helm chart. The classic chart is frozen at 8.5.1
+from 2022, but unlike ingress-nginx it was replaced rather than abandoned: cluster formation,
+certificate rotation and shard-aware rolling restarts cannot be templated. Helm renders and
+exits; it cannot restart a StatefulSet one pod at a time while watching shard allocation.
 
-**Two fluent-bit deployments**, because one cannot see both sources: the DaemonSet reads
-container stdout and covers every other pod, while the application writes only to a file
-inside its own pod. The sidecar is a **native sidecar** (`initContainer` +
-`restartPolicy: Always`), so it starts before the app and stops after it — which is why
-"Graceful shutdown complete" reaches Elasticsearch for a pod that no longer exists.
+fluent-bit runs twice, because one deployment cannot see both sources. The DaemonSet reads
+container stdout and covers every other pod; the application writes only to a file inside its
+own pod, which a DaemonSet has no path to. That sidecar is a native sidecar — an
+`initContainer` with `restartPolicy: Always` — so it starts before the app and stops after
+it, which is why "Graceful shutdown complete" reaches Elasticsearch for a pod that no longer
+exists.
 
-**Kibana was not installed.** Elasticsearch has no dashboard, Kibana does, and Kibana costs
-~1 GiB. Grafana is already a dashboard, so it gets two Elasticsearch datasources instead.
+No Kibana. Elasticsearch has no dashboard, Kibana does, and Kibana costs about a gigabyte on a
+host with none to spare. Grafana is already a dashboard, so it got two Elasticsearch
+datasources instead.
 
 ---
 
 ## CI/CD
 
-**BuildKit rootless, not kaniko** — **Google archived kaniko on 3 June 2025.** Adopting an
-archived tool for a pipeline meant to demonstrate current practice repeats the ingress-nginx
-mistake. Mounting the node's `docker.sock` was rejected earlier still: it gives the build pod
-root on the node's runtime.
+BuildKit rootless rather than kaniko. Kaniko was my default answer going in, and Google
+archived the repository on 3 June 2025 — adopting an archived tool for a pipeline meant to
+show current practice would repeat the ingress-nginx mistake exactly. Mounting the node's
+`docker.sock` was out before that: it gives the build pod root on the node's runtime.
 
-**Images tagged by git commit SHA.** `latest` is pushed for humans and **no Deployment ever
-references it** — a moving tag gives a rolling update nothing to compare and `rollout undo` no
-image to return to.
+Images are tagged with the git commit SHA. `latest` is pushed for anyone typing `docker pull`
+and no Deployment ever references it — a moving tag gives a rolling update nothing to compare
+and `rollout undo` no image to go back to.
 
-**Polling, not a webhook**, because this cluster's public records resolve to RFC1918
-addresses and GitHub cannot reach it. Correct for a private cluster, not a downgrade.
+Polling instead of a webhook, because this cluster's public records resolve to RFC1918
+addresses and GitHub cannot reach it. Both jobs are defined in JCasC rather than created in
+the UI, so they survive a rebuild.
 
-**Both jobs are defined in JCasC**, so they survive a rebuild rather than living in someone's
-click history.
+The deployment pipeline is an SSH client, not a Kubernetes client. It runs the same
+`08-app.yml` that `site.yml` runs, on the control plane, against that node's own
+`admin.conf`. Giving it a kubeconfig would mean two execution models for one file depending
+on who called it. A side effect worth noticing: the agent needs no Kubernetes RBAC of its
+own.
 
-**The deployment pipeline is an SSH client, not a Kubernetes client.** It runs the same
-`08-app.yml` that `site.yml` runs, on the control plane, against that node's own `admin.conf`.
-Giving it a kubeconfig would mean two execution models for one file. Consequence worth
-stating: **the agent needs no Kubernetes RBAC of its own.**
+One playbook, two callers. `site.yml` imports it so one command produces the whole cluster;
+the pipeline calls it with `-e app_image_tag=<sha>`. That override is an interim answer, not
+a design — `kubectl set image` makes the cluster and the manifest disagree, and the clean
+version is the pipeline committing the tag back for something to reconcile.
 
-**One playbook, two callers.** `site.yml` imports it; the pipeline calls it with
-`-e app_image_tag=<sha>`. That override is named as an interim answer — `kubectl set image`
-makes the cluster and the manifest disagree, and the clean version is the pipeline committing
-the tag back for a controller to reconcile.
-
-**Rolling update with `maxSurge: 0, maxUnavailable: 1`.** The earlier `maxUnavailable: 0` was a
-stronger guarantee that **could not execute here**: the surge pod needed 320Mi and the spread
-constraint forced it onto the node with 297Mi free. Three defensible decisions intersected
-into a rollout that could not finish. A guarantee that cannot execute is worth less than a
-weaker one that can.
+The rollout uses `maxSurge: 0, maxUnavailable: 1`. I started with `maxUnavailable: 0`, which
+is the stronger promise, and it could not execute here: the surge pod wanted 320 MB and the
+spread constraint sent it to the node with 297 MB free. Three defensible decisions — no
+unavailability, even spread, a cluster at 94% — intersected into a rollout that could not
+finish.
 
 ---
 
 ## Admission control
 
-**A webhook, though a policy would be better.** `ValidatingAdmissionPolicy` (CEL, GA since
-1.30) expresses the same rule inside the API server — no network hop, no TLS, no pods, no
-`failurePolicy` dilemma. The case asks for a custom webhook, so that is what is built, and
-naming the better answer is part of the answer.
+The case asks for a custom validating webhook, so that is what this is. But
+`ValidatingAdmissionPolicy` — CEL, GA since 1.30 — expresses the same rule inside the API
+server with no network hop, no TLS, no pods to keep alive and no `failurePolicy` dilemma. For
+a rule this simple it is the better production answer, and I would rather say so than pretend
+the webhook is the only way.
 
-**Go over Java:** `k8s.io/api` carries the `AdmissionReview` types and the image is **12.3 MB**
-against ~180 MB with a JVM — which matters for a component on the critical path of every
-Deployment write.
+Go rather than Java: `k8s.io/api` carries the `AdmissionReview` types directly and the image
+is 12.3 MB against roughly 180 with a JVM. That matters here more than anywhere else, because
+this thing sits on the path of every Deployment write in the cluster.
 
-**`failurePolicy: Fail`**, because a policy that disappears when its enforcer dies is not a
-policy. That forces two replicas across two nodes, a PodDisruptionBudget, and namespace
-exclusions.
+`failurePolicy: Fail`, because a policy that disappears when its enforcer dies is not a
+policy. That forces two replicas across two nodes and a PodDisruptionBudget.
 
-**The exclusions are not cosmetic.** Before enabling the webhook the cluster was asked what
-would happen, and **seven existing Deployments violated the policy** — all upstream charts,
-including `tigera-operator`, which reconciles Calico continuously. Without the exclusion its
-next update to `calico-typha` would have been rejected by our own webhook, leaving the CNI
-unable to repair itself. *Trade-off:* the policy covers workload namespaces, not the platform;
-the real fix is setting requests in each chart's values and shrinking the exemption list.
+It also forces namespace exclusions, and those are not cosmetic. Before turning the webhook
+on I asked the cluster what would happen, and seven Deployments already violated the policy —
+all of them upstream charts, including `tigera-operator`, which reconciles Calico
+continuously. Without the exclusion its next update to `calico-typha` would have been
+rejected by my own webhook, leaving the CNI unable to repair itself. The policy now covers
+workload namespaces rather than the platform; the real fix is setting requests in each
+chart's values and shrinking the exemption list until only `kube-system` is left.
 
 ---
 
 ## Known limitations
 
-| Limitation | Consequence | Production answer |
+| | Consequence | What production would do |
 |---|---|---|
 | Single etcd member | The cluster's single point of failure, forced by the 1+2 topology | Three stacked control plane nodes; `controlPlaneEndpoint` is already set so no certificates change |
-| **No etcd snapshot job** | Nothing backs up cluster state — planned, **not built** | A CronJob running `etcdctl snapshot save` off-node, plus a rehearsed restore |
+| No etcd snapshot job | Nothing backs up cluster state — planned, not built | A CronJob running `etcdctl snapshot save` off-node, plus a rehearsed restore |
 | Single control plane | No API server redundancy | Three behind a load balancer |
 | Encryption key on the node | Protects a stolen snapshot, not root on that host | KMS envelope encryption |
-| Insecure Vagrant SSH key | Every node trusts a public key — and the deploy pipeline now holds it, which is root on the cluster | Provisioned single-purpose keys |
-| Static IAM credentials | A long-lived AWS key in a Secret | IRSA or workload identity federation |
+| Insecure Vagrant SSH key | Every node trusts a public key, and the deploy pipeline now holds it — which is root on the cluster | Provisioned single-purpose keys |
+| Pipeline credentials applied by hand | `site.yml` gives a working cluster, but the Docker Hub token, deploy key and SSH key are separate, so the Jenkins jobs do not run on a fresh rebuild until they are applied | External Secrets Operator pulling them from a secret manager |
+| Static IAM credentials | A long-lived AWS key in a Secret | IRSA, or workload identity federation |
 | L2 LoadBalancer | All traffic for an address enters through one node | BGP with a peering router |
 | Single-node Elasticsearch | No replicas; losing the node loses the index | Three nodes, replica shards, snapshots |
 | Elasticsearch HTTP without TLS | Logs and the credential cross the pod network in clear | cert-manager, or a mesh terminating TLS everywhere |
-| fluent-bit uses the `elastic` superuser | A log shipper with full rights, password in two namespaces | A scoped user via ECK's file realm |
-| etcd metrics unauthenticated on 2381 | Readable by anything on the node network; opened so the control plane could be scraped | Firewalled to the monitoring node |
+| fluent-bit uses the `elastic` superuser | A log shipper with full rights, and the password exists in two namespaces | A scoped user via ECK's file realm |
+| etcd metrics unauthenticated on 2381 | Readable by anything on the node network; opened so the control plane could be scraped at all | Firewalled to the monitoring node |
 | No index lifecycle policy | Old log indices are never deleted | ILM with a retention window |
-| Nothing watches certificate expiry | Certificates lapse after a year without warning | A `PrometheusRule` plus scheduled renewal |
+| Nothing watches certificate expiry | Certificates lapse after a year with no warning | A `PrometheusRule` plus scheduled renewal |
 | No metrics-server | The HPA in `examples/step-3.1/` would report `<unknown>` | metrics-server or Prometheus Adapter |
+| Ingress hostnames literal in two manifests | `dns_zone` is a variable but Kustomize does not template | A Kustomize overlay per environment |
 | No continuous reconciliation | Ansible is right when it runs, then stops looking | ArgoCD — see [ANSWERS.md](ANSWERS.md) |
