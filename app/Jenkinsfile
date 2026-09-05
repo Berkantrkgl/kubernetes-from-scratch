@@ -1,8 +1,5 @@
-// Build pipeline -- requirement 2.2. The Kubernetes plugin creates a pod for this
-// build alone and deletes it afterwards, so there is no toolchain sitting idle
-// between builds and nothing here assumes a previous build's state.
-//
-// Design decisions, alternatives and the archived-kaniko finding: docs/mds/build-pipeline.md
+// Build pipeline -- requirement 2.2. Every build gets its own pod and it is deleted
+// afterwards, so nothing here may assume a previous build's state.
 pipeline {
   agent {
     kubernetes {
@@ -14,9 +11,8 @@ pipeline {
             - name: buildkit
               image: moby/buildkit:v0.32.2-rootless
               args: ["--oci-worker-no-process-sandbox"]
-              # rootless buildkit needs BOTH profiles unconfined. seccomp alone gets
-              # you "rootlesskit: failed to share mount point: /: permission denied",
-              # which reads like a privilege problem and is an AppArmor one
+              # both profiles, not just seccomp. with seccomp alone rootlesskit fails
+              # on "permission denied", which reads like a privilege problem and is AppArmor
               securityContext:
                 runAsUser: 1000
                 runAsGroup: 1000
@@ -46,9 +42,8 @@ pipeline {
 
   environment {
     IMAGE = 'berkantrkgl/query-echo'
-    // rootless buildkitd listens on this socket as uid 1000 -- default discovery
-    // depends on XDG_RUNTIME_DIR being set the same way the daemon saw it, so the
-    // path is given explicitly rather than assumed
+    // given explicitly: default discovery needs XDG_RUNTIME_DIR to match what the
+    // rootless daemon saw, and it does not here
     BUILDCTL = 'buildctl --addr unix:///run/user/1000/buildkit/buildkitd.sock'
   }
 

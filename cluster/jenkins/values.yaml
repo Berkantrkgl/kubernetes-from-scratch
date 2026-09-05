@@ -44,9 +44,8 @@ controller:
         jenkins:
           systemMessage: "Kubernetes from scratch. Configured as code, nothing clicked."
 
-      # github.com's own published ed25519 host key, not "accept first connection" --
-      # the repo is private, so this SSH connection is worth verifying rather than
-      # trusting on first use. docs/mds/build-pipeline.md
+      # github's published ed25519 host key rather than trust-on-first-use, since
+      # this clone reaches a private repo
       git-security: |
         security:
           gitHostKeyVerificationConfiguration:
@@ -105,15 +104,12 @@ rbac:
   readSecrets: true
 
 agent:
-  # chart default is 100s, counted from pod creation to the agent calling home. a
-  # cold pull of the buildkit image does not fit in that, and the plugin cancels the
-  # queue item rather than waiting -- which surfaces as ABORTED, not as a timeout
+  # chart default 100s, counted from pod creation to the agent calling home. a cold
+  # buildkit pull does not fit, and the plugin reports it as ABORTED, not as a timeout
   connectTimeout: 300
 
-  # this is the jnlp sidecar the plugin injects into every build pod, not the build
-  # itself. 512Mi of *request* on a 3.8Gi worker that already holds the platform is
-  # what left the first build Pending -- it burst-limits to 512Mi, it just no longer
-  # reserves it
+  # the jnlp sidecar the plugin injects into every build pod, not the build itself.
+  # 512Mi of request is what left the first build Pending; it still bursts to 512Mi
   resources:
     requests:
       cpu: 100m

@@ -1,6 +1,5 @@
-# kustomize orders by kind, so the Namespace goes first without the filenames
-# having to say so. the list is explicit: a file that is not named here is not
-# deployed, which is the property worth having in a directory someone else reads
+# kustomize orders by kind, so the Namespace goes first whatever the files are called.
+# the list is explicit: a file not named here is not deployed
 resources:
   - namespace.yaml
   - fluent-bit-config.yaml

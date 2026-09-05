@@ -84,7 +84,7 @@ etcd:
         value: "500"
       - name: election-timeout
         value: "5000"
-      # unlike the two above this port has no auth, see mds/monitoring.md
+      # unlike the two above this port has no auth at all
       - name: listen-metrics-urls
         value: http://0.0.0.0:2381
 

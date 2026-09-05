@@ -2,11 +2,11 @@
 # The whole cluster, from three fresh VMs to everything it runs.
 #
 #   vagrant up
-#   cd ansible && ansible-playbook site.yml -e @../docs/route53.yml
+#   cd ansible && ansible-playbook site.yml -e @../route53.yml
 #
-# That file holds the Route53 key and is gitignored. -e @file rather than -e key=value,
-# so the key never reaches argv. Only needed on the first run: after that the Secret it
-# created is what 05 finds. Every other credential is generated on the node.
+# That file holds the Route53 key and is gitignored -- @file rather than key=value, so it
+# never reaches argv. Only needed on the first run. Every other credential is generated
+# on the node.
 
 - ansible.builtin.import_playbook: playbooks/01-node-prep.yml
 - ansible.builtin.import_playbook: playbooks/02-control-plane.yml

@@ -66,10 +66,9 @@
       changed_when: false
       tags: [metallb]
 
-    # Available is not enough: it follows the readiness probe, which polls :17472,
-    # while the validating webhook listens on :9443. So the deployment can be ready
-    # while the pool is still rejected with connection refused. Retrying an
-    # idempotent apply is the only honest way to wait for a webhook
+    # Available follows the readiness probe on :17472, but the webhook listens on :9443,
+    # so the deployment can be ready while the pool is still refused. nothing publishes
+    # "my webhook accepts connections", so retry instead
     - name: Apply the MetalLB address pool
       ansible.builtin.command: kubectl apply -f /vagrant/cluster/metallb/pool.yaml
       register: metallb_pool

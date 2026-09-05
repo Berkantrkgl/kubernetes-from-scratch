@@ -2,10 +2,8 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 
-# webhook-configuration.yaml is deliberately not here. it carries a caBundle that only
-# exists once the certificate has been generated, and pointing the apiserver at a
-# service whose pods are not ready yet fails every Deployment write in the cluster.
-# ansible applies it last, with the CA filled in.
+# webhook-configuration.yaml is applied by ansible instead, last and with the caBundle
+# filled in -- pointing the apiserver at pods that are not ready blocks every write
 resources:
   - namespace.yaml
   - deployment.yaml

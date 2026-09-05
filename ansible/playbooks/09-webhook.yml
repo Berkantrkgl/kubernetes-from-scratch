@@ -34,9 +34,8 @@
       register: webhook_ca
       tags: [webhook]
 
-    # the guard covers the whole block rather than each file: a regenerated CA would
-    # have to be replaced in the Secret and the caBundle together, or the apiserver
-    # ends up trusting a certificate the webhook no longer presents
+    # the guard covers the whole block: a regenerated CA has to reach the Secret and the
+    # caBundle together, or the apiserver trusts a certificate nobody presents
     - name: Generate the CA and the serving certificate
       when: not webhook_ca.stat.exists
       tags: [webhook]
@@ -58,8 +57,7 @@
             openssl req -new -key {{ cert_dir }}/tls.key
             -subj "/CN={{ service_fqdn }}" -out {{ cert_dir }}/tls.csr
 
-        # the apiserver dials the service name, and TLS verifies the name it dialled
-        # against the SAN -- a certificate without it is refused however valid it is
+        # the apiserver dials the service name and checks it against the SAN
         - name: Write the SAN extension
           ansible.builtin.copy:
             dest: "{{ cert_dir }}/san.ext"

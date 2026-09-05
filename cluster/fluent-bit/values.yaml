@@ -32,9 +32,8 @@ config:
         Health_Check On
 
   inputs: |
-    # Read_from_Head without a DB would resend everything on every restart. with
-    # one, a known file resumes at its offset and a new file is read whole -- so a
-    # pod that logs at startup and then goes quiet is not lost
+    # Read_from_Head alone would resend every file on restart. with the DB a known
+    # file resumes at its offset and only a new one is read whole
     [INPUT]
         Name tail
         Tag kube.*

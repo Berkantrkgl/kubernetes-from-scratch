@@ -56,7 +56,7 @@ alertmanager:
           repeat_interval: 1h
     receivers:
       - name: "null"
-      # no *_configs: there is no channel to deliver to here, see mds/monitoring.md
+      # no *_configs: there is no channel to deliver to in an offline lab
       - name: pod-restart
 
   # deliberately not pinned to monitoring=metrics like the rest of the stack: its

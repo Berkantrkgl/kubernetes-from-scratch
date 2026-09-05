@@ -40,8 +40,7 @@ func main() {
 	signal.Notify(stop, syscall.SIGTERM, syscall.SIGINT)
 	<-stop
 
-	// with failurePolicy: Fail an in-flight review that dies is a rejected write,
-	// so drain before exiting rather than dropping whatever the apiserver is mid-way through
+	// with failurePolicy: Fail, an in-flight review that dies is a rejected write
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	if err := srv.Shutdown(ctx); err != nil {

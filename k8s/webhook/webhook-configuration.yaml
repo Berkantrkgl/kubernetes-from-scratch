@@ -10,10 +10,9 @@ webhooks:
     failurePolicy: Fail
     timeoutSeconds: 5
 
-    # kube-system and this webhook's own namespace are excluded so a broken webhook
-    # cannot block the deploy that fixes it. the rest are upstream charts whose
-    # deployments ship without requests -- tigera-operator reconciles calico
-    # continuously, and a rejected reconcile would leave the CNI unable to repair itself
+    # kube-system and our own namespace, so a broken webhook cannot block its own fix.
+    # the rest are upstream charts shipping without requests -- and a rejected
+    # tigera-operator reconcile would leave calico unable to repair itself
     namespaceSelector:
       matchExpressions:
         - key: kubernetes.io/metadata.name

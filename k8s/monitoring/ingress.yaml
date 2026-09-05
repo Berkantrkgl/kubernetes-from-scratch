@@ -36,9 +36,8 @@ spec:
                 name: kps-grafana
                 port:
                   number: 80
-          # both, and the trailing slash is the one that matters: NIC builds the
-          # rewrite as ^<path>(.*)$ -> /$1, so /elasticsearch/_cat becomes //_cat
-          # without it and elasticsearch rejects the double slash
+          # both, and the trailing slash matters: NIC builds ^<path>(.*)$ -> /$1, so
+          # without it /elasticsearch/_cat becomes //_cat and gets rejected
           - path: /elasticsearch
             pathType: Prefix
             backend:

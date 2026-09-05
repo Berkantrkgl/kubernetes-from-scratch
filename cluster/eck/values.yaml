@@ -5,14 +5,12 @@ resources:
   limits:
     memory: 512Mi          # chart ships 1Gi and a cpu limit, neither is needed here
 
-# off by default. the ingress controller's metrics were enabled for the same
-# reason in mds/ingress.md: the component that watches everything gets watched
+# off by default. the component that watches everything should be watched too
 config:
   metrics:
     port: "8080"
 
-# the chart can render a PodMonitor, and it must not: PodMonitor's CRD arrives with
-# kube-prometheus-stack, which is installed after this. ours is applied as a manifest
-# in k8s/monitoring/ instead, next to the CRDs it depends on
+# the chart must not render a PodMonitor: that CRD arrives with kube-prometheus-stack,
+# which is installed after this. ours lives in k8s/monitoring/ instead
 podMonitor:
   enabled: false

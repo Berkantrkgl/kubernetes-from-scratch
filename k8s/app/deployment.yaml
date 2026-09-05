@@ -16,10 +16,9 @@ spec:
   strategy:
     type: RollingUpdate
     rollingUpdate:
-      # no surge pod, so a rollout needs no free memory anywhere: one pod goes first and
-      # its replacement takes the space it freed. three of four serve throughout, which
-      # is still zero downtime at the Service. maxUnavailable: 0 was the earlier choice
-      # and could not execute here -- the fifth pod had nowhere to land
+      # no surge pod: one goes first and its replacement takes the space it freed, so a
+      # rollout needs no spare memory. maxUnavailable: 0 wanted a fifth pod and this
+      # cluster had nowhere to put it
       maxSurge: 0
       maxUnavailable: 1
 

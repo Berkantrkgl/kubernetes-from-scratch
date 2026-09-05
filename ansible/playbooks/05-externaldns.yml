@@ -1,7 +1,7 @@
 ---
 # ExternalDNS against Route53. Before the components whose hostnames it creates.
 #
-#   ansible-playbook playbooks/05-externaldns.yml -e @../docs/route53.yml
+#   ansible-playbook playbooks/05-externaldns.yml -e @../route53.yml
 #
 # The AWS key cannot be generated here. Supply it once; after that the Secret it
 # created is what this finds.
@@ -34,7 +34,7 @@
       ansible.builtin.fail:
         msg: >-
           Secret route53-credentials is absent and no credential was supplied.
-          Re-run with -e @../docs/route53.yml
+          Re-run with -e @../route53.yml
       when:
         - route53_secret.rc != 0
         - route53_access_key_id is not defined

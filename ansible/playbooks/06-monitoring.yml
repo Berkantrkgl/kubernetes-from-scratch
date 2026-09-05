@@ -95,9 +95,8 @@
       no_log: true
       tags: [template]
 
-    # before fluent-bit, or the first index of a fresh cluster is created without it
-    # and keeps the default of one replica, which a single node can never allocate.
-    # not named "logs" -- that collides with an x-pack managed template and x-pack
+    # before fluent-bit writes anything, or the first index keeps the default replica
+    # a single node can never allocate. not named "logs" -- x-pack owns that name and
     # quietly restores its own
     - name: Create the log index template
       ansible.builtin.command: >-
@@ -169,9 +168,8 @@
         state: present
       tags: [prometheus]
 
-    # helm returns once the custom resources are accepted, and the operator turns
-    # them into StatefulSets a moment later. rollout status does not wait for an
-    # object to appear, it fails on NotFound, so the existence check comes first
+    # helm returns before the operator has built the StatefulSet, and rollout status
+    # fails on NotFound rather than waiting -- so check existence first
     - name: Wait for the Prometheus StatefulSet to appear
       ansible.builtin.command: >-
         kubectl -n monitoring wait --for=create

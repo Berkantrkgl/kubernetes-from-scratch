@@ -51,8 +51,7 @@
       no_log: true
       tags: [app]
 
-    # only when the pipeline asks. left out, the manifest decides which image runs,
-    # which is the property mds/docker.md wants kept
+    # only when the pipeline asks. left out, the manifest in git decides which image runs
     - name: Point the deployment at a specific image
       ansible.builtin.command: >-
         kubectl -n query-echo set image deployment/query-echo

@@ -37,8 +37,8 @@
       no_log: true
       tags: [jenkins]
 
-    # the chart reuses this rather than creating its own, which needs an odd pair of
-    # values to work at all -- see mds/jenkins.md
+    # the chart reuses this rather than creating its own, which takes an odd pair of
+    # values: createSecret true *and* existingSecret set, or no volume is mounted
     - name: Create the Jenkins admin credential
       ansible.builtin.command: kubectl apply -f -
       args:

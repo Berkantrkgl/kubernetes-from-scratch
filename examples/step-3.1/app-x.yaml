@@ -39,9 +39,8 @@ spec:
             - name: http
               containerPort: 9001
 
-          # requests == limits on both resources makes this Guaranteed: last in line
-          # under node pressure, and the cpu is reserved rather than shared. the cost
-          # is no bursting - accepted here, predictability is what real-time asks for
+          # requests == limits makes this Guaranteed: last to be evicted, cpu reserved
+          # rather than shared. the cost is no bursting, which real-time trades away
           resources:
             requests:
               cpu: 500m

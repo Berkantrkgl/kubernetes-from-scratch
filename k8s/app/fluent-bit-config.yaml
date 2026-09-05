@@ -11,11 +11,9 @@ data:
         Log_Level info
         Parsers_File /fluent-bit/etc/parsers.conf
 
-    # only the active file. the rotated ones are .log.gz and re-reading them
-    # after every roll would duplicate everything
-    # this sidecar always starts before the application, so the file does not exist
-    # yet when tail initialises. the 60s default Refresh_Interval plus reading from
-    # the tail loses every line of the first minute, startup included
+    # only the active file -- the rotated ones are .log.gz and would be read twice
+    # this sidecar starts before the application, so the file does not exist yet when
+    # tail initialises. the 60s default plus reading from the tail loses the first minute
     [INPUT]
         Name tail
         Tag app

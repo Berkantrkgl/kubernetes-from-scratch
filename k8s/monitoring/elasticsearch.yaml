@@ -14,9 +14,8 @@ spec:
   http:
     tls:
       selfSignedCertificate:
-        # nothing else in this cluster encrypts pod-to-pod traffic, so terminating
-        # a self-signed cert in three consumers buys appearance, not security.
-        # authentication stays on. see mds/logging.md
+        # nothing else here encrypts pod-to-pod traffic, so a self-signed cert in three
+        # consumers buys appearance, not security. authentication stays on
         disabled: true
 
   nodeSets:

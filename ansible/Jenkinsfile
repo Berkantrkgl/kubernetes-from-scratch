@@ -1,9 +1,5 @@
-// Deployment pipeline -- requirement 2.3. This is a client, not the thing that talks
-// to the API server: 08-app.yml runs over SSH against the control plane and executes
-// kubectl there, using that node's own admin.conf. So this agent needs ansible-core
-// and an SSH client, not a kubeconfig and not any Kubernetes RBAC of its own.
-//
-// Design decisions and the credential shape: docs/mds/deployment-pipeline.md
+// Deployment pipeline -- requirement 2.3. Runs ansible over SSH against the control
+// plane, so this agent needs no kubeconfig and no Kubernetes RBAC of its own.
 pipeline {
   agent {
     kubernetes {
@@ -11,10 +7,8 @@ pipeline {
         apiVersion: v1
         kind: Pod
         spec:
-          # deliberate exception to the retained control plane taint, and the only one:
-          # this agent runs ansible and ssh, never workload code, and it ssh's to this
-          # node anyway. on a worker its own 384Mi is the headroom the rollout it is
-          # driving needs -- the agent and the deployment deadlock over the same memory
+          # the one exception to the control plane taint. on a worker this agent's own
+          # 384Mi is the headroom the rollout it is driving needs, and the two deadlock
           nodeSelector:
             node-role.kubernetes.io/control-plane: ""
           tolerations:
@@ -26,18 +20,15 @@ pipeline {
               image: ghcr.io/ansible-community/community-ee-minimal:2.21.3-1
               command: ["sleep"]
               args: ["9999999"]
-              # the image's own uid 1000 has no /etc/passwd entry -- it is built for
-              # OpenShift's arbitrary-uid model -- and the ssh client refuses to run
-              # when getpwuid() fails: "No user exists for uid 1000"
+              # the image's uid 1000 has no /etc/passwd entry, and ssh refuses to start
+              # when getpwuid() fails
               securityContext:
                 runAsUser: 0
               env:
                 - name: HOME
                   value: /tmp
-                # ansible.cfg asks for the yaml callback, which ships in a collection
-                # this image does not carry. a missing *stdout* callback is fatal; the
-                # missing profile_tasks next to it is skipped silently, so only this
-                # one needs overriding and ansible.cfg stays as the host wants it
+                # ansible.cfg wants the yaml callback, which this image does not carry,
+                # and a missing stdout callback is fatal. only this one needs overriding
                 - name: ANSIBLE_STDOUT_CALLBACK
                   value: default
               resources:
@@ -53,9 +44,8 @@ pipeline {
   }
 
   environment {
-    // params are readable as params.X in groovy but are not exported to the shell, and
-    // a sh block in single quotes does no interpolation -- so $IMAGE_TAG was empty and
-    // the playbook silently skipped its set-image task while the pipeline stayed green
+    // params.X is not exported to the shell, and a single-quoted sh block does not
+    // interpolate -- without this the tag arrives empty and the deploy silently skips
     IMAGE_TAG = "${params.IMAGE_TAG}"
   }
 
@@ -67,10 +57,6 @@ pipeline {
     stage('Deploy') {
       steps {
         container('ansible') {
-          // same credential shape as Docker Hub's in app/Jenkinsfile -- a labeled
-          // Secret the kubernetes-credentials-provider plugin turns into a Jenkins
-          // credential, written to a temp file with correct permissions and removed
-          // when the step ends
           withCredentials([sshUserPrivateKey(
               credentialsId: 'vagrant-ssh',
               keyFileVariable: 'SSH_KEY_FILE')]) {

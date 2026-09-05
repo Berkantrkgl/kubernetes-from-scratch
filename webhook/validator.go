@@ -40,8 +40,7 @@ func handleValidate(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// the apiserver rejects a response without these, and the failure looks like a
-	// broken webhook rather than a malformed reply
+	// without these the apiserver rejects the reply, and it reads as a broken webhook
 	out := admissionv1.AdmissionReview{
 		TypeMeta: metav1.TypeMeta{
 			APIVersion: admissionv1.SchemeGroupVersion.String(),
