@@ -1,0 +1,126 @@
+---
+# The validating admission webhook -- requirement 2.4.
+#
+#   ansible-playbook playbooks/09-webhook.yml
+#
+# Last on purpose. Once this is active with failurePolicy: Fail, every Deployment
+# written anywhere outside kube-system has to carry resource requests, so the platform
+# charts in 06 and 07 install before the rule that would judge them.
+
+- name: Deploy the validating admission webhook
+  hosts: control_plane
+  become: true
+
+  environment:
+    KUBECONFIG: /etc/kubernetes/admin.conf
+
+  vars:
+    cert_dir: /etc/kubernetes/webhook-certs
+    manifests: /vagrant/k8s/webhook
+    service_fqdn: resource-requests-webhook.webhook.svc
+
+  tasks:
+
+    - name: Create the certificate directory
+      ansible.builtin.file:
+        path: "{{ cert_dir }}"
+        state: directory
+        mode: "0700"
+      tags: [webhook]
+
+    - name: Look for an existing CA
+      ansible.builtin.stat:
+        path: "{{ cert_dir }}/ca.crt"
+      register: webhook_ca
+      tags: [webhook]
+
+    # the guard covers the whole block rather than each file: a regenerated CA would
+    # have to be replaced in the Secret and the caBundle together, or the apiserver
+    # ends up trusting a certificate the webhook no longer presents
+    - name: Generate the CA and the serving certificate
+      when: not webhook_ca.stat.exists
+      tags: [webhook]
+      block:
+
+        - name: Generate the CA key
+          ansible.builtin.command: openssl genrsa -out {{ cert_dir }}/ca.key 2048
+
+        - name: Generate the CA certificate
+          ansible.builtin.command: >-
+            openssl req -x509 -new -nodes -key {{ cert_dir }}/ca.key -days 3650
+            -subj "/CN=resource-requests-webhook-ca" -out {{ cert_dir }}/ca.crt
+
+        - name: Generate the serving key
+          ansible.builtin.command: openssl genrsa -out {{ cert_dir }}/tls.key 2048
+
+        - name: Generate the signing request
+          ansible.builtin.command: >-
+            openssl req -new -key {{ cert_dir }}/tls.key
+            -subj "/CN={{ service_fqdn }}" -out {{ cert_dir }}/tls.csr
+
+        # the apiserver dials the service name, and TLS verifies the name it dialled
+        # against the SAN -- a certificate without it is refused however valid it is
+        - name: Write the SAN extension
+          ansible.builtin.copy:
+            dest: "{{ cert_dir }}/san.ext"
+            mode: "0600"
+            content: |
+              subjectAltName = DNS:{{ service_fqdn }}, DNS:{{ service_fqdn }}.cluster.local
+              extendedKeyUsage = serverAuth
+
+        - name: Sign the serving certificate
+          ansible.builtin.command: >-
+            openssl x509 -req -in {{ cert_dir }}/tls.csr -days 3650
+            -CA {{ cert_dir }}/ca.crt -CAkey {{ cert_dir }}/ca.key -CAcreateserial
+            -extfile {{ cert_dir }}/san.ext -out {{ cert_dir }}/tls.crt
+
+    - name: Create the namespace
+      ansible.builtin.command: kubectl apply -f {{ manifests }}/namespace.yaml
+      register: webhook_ns
+      changed_when: "'created' in webhook_ns.stdout or 'configured' in webhook_ns.stdout"
+      tags: [webhook]
+
+    # generated on the node, so the key never reaches this repository
+    - name: Create the serving certificate secret
+      ansible.builtin.shell: |
+        set -o pipefail
+        kubectl create secret tls webhook-tls -n webhook \
+          --cert={{ cert_dir }}/tls.crt --key={{ cert_dir }}/tls.key \
+          --dry-run=client -o yaml | kubectl apply -f -
+      args:
+        executable: /bin/bash
+      register: webhook_secret
+      changed_when: "'created' in webhook_secret.stdout or 'configured' in webhook_secret.stdout"
+      no_log: true
+      tags: [webhook]
+
+    - name: Apply the deployment, service and disruption budget
+      ansible.builtin.command: kubectl apply -k {{ manifests }}
+      register: webhook_apply
+      changed_when: "'created' in webhook_apply.stdout or 'configured' in webhook_apply.stdout"
+      tags: [webhook]
+
+    - name: Wait for the webhook to be ready
+      ansible.builtin.command: >-
+        kubectl -n webhook rollout status deployment/resource-requests-webhook --timeout=300s
+      changed_when: false
+      tags: [webhook]
+
+    - name: Read the CA for the caBundle
+      ansible.builtin.slurp:
+        src: "{{ cert_dir }}/ca.crt"
+      register: webhook_ca_bundle
+      tags: [webhook]
+
+    # applied last, and only once the pods report ready. pointing the apiserver at a
+    # webhook that cannot answer rejects every Deployment write in the cluster
+    - name: Apply the webhook configuration with the CA injected
+      ansible.builtin.shell: |
+        set -o pipefail
+        sed 's|caBundle: ""|caBundle: {{ webhook_ca_bundle.content }}|' \
+          {{ manifests }}/webhook-configuration.yaml | kubectl apply -f -
+      args:
+        executable: /bin/bash
+      register: webhook_config
+      changed_when: "'created' in webhook_config.stdout or 'configured' in webhook_config.stdout"
+      tags: [webhook]

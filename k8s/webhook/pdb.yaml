@@ -1,0 +1,12 @@
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: resource-requests-webhook
+  namespace: webhook
+spec:
+  # losing both replicas blocks every Deployment write in the cluster
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: resource-requests-webhook

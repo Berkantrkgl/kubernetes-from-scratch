@@ -16,3 +16,4 @@
 - ansible.builtin.import_playbook: playbooks/06-monitoring.yml
 - ansible.builtin.import_playbook: playbooks/07-jenkins.yml
 - ansible.builtin.import_playbook: playbooks/08-app.yml
+- ansible.builtin.import_playbook: playbooks/09-webhook.yml
