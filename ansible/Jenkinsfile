@@ -52,6 +52,13 @@ pipeline {
            description: 'Image tag to deploy. Empty deploys whatever k8s/app/deployment.yaml already names in git.')
   }
 
+  environment {
+    // params are readable as params.X in groovy but are not exported to the shell, and
+    // a sh block in single quotes does no interpolation -- so $IMAGE_TAG was empty and
+    // the playbook silently skipped its set-image task while the pipeline stayed green
+    IMAGE_TAG = "${params.IMAGE_TAG}"
+  }
+
   stages {
     stage('Checkout') {
       steps { checkout scm }
